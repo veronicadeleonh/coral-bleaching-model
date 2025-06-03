@@ -1,0 +1,80 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# VS Code settings
+.vscode/
+
+# macOS metadata
+.DS_Store
+
+# Test and coverage reports
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.cache
+nosetests.xml
+pytest_cache/
+coverage/
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Data files and logs
+*.log
+*.sqlite3
+*.csv
+*.tsv
+*.parquet
+*.h5
+*.db
+*.pkl
+*.joblib
+
+# Environment and credentials
+.env
+.env.*
+*.env
+secrets.yaml
+credentials.json
+
+# MyPy, Pyre, Pytype
+.mypy_cache/
+.pyre/
+.pytype/
+
+# Spyder
+.spyderproject
+.spyproject
+
+# PyCharm
+.idea/
+
+# Bandit security reports
+bandit.json
