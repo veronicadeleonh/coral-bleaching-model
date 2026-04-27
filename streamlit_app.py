@@ -8,48 +8,57 @@ import pydeck as pdk
 import warnings
 warnings.filterwarnings("ignore")
 
-# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Coral Bleaching Monitor",
     page_icon="🪸",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    .block-container { padding-top: 1.5rem; padding-bottom: 1rem; }
-    h1 { font-size: 1.6rem !important; font-weight: 600 !important; }
-    h2 { font-size: 1.15rem !important; font-weight: 600 !important; margin-top: 1.2rem !important; }
-    h3 { font-size: 1rem !important; font-weight: 600 !important; }
-    .metric-card {
-        background: #f8f9fa; border-radius: 10px;
-        padding: 14px 18px; margin-bottom: 8px;
-        border: 1px solid #e9ecef;
+    .block-container { padding-top: 2.5rem; padding-bottom: 1rem; max-width: 1200px; }
+    h1 { font-size: 1.5rem !important; font-weight: 500 !important; }
+    h2 { font-size: 1.05rem !important; font-weight: 500 !important; margin-top: 1rem !important; }
+    h3 { font-size: 0.95rem !important; font-weight: 500 !important; }
+    .stTabs [data-baseweb="tab"] { font-size: 0.88rem; font-weight: 500; }
+    div[data-testid="stMetricValue"] { font-size: 1.6rem; }
+
+    .severity-card {
+        border-radius: 12px; padding: 16px 20px;
+        margin: 8px 0; text-align: center;
     }
-    .stTabs [data-baseweb="tab"] { font-size: 0.9rem; font-weight: 500; }
-    .severity-badge {
-        display: inline-block; padding: 6px 16px;
-        border-radius: 20px; font-weight: 600;
-        font-size: 1rem; margin-bottom: 8px;
+    .sev-healthy  { background:#d4edda; color:#155724; }
+    .sev-stressed { background:#fff3cd; color:#856404; }
+    .sev-bleaching{ background:#fde8d8; color:#8a3a00; }
+    .sev-severe   { background:#f8d7da; color:#721c24; }
+    .sev-dead     { background:#2d2d2d; color:#f0f0f0; }
+
+    .sev-icon  { font-size: 2.2rem; margin-bottom: 6px; }
+    .sev-label { font-size: 1.1rem; font-weight: 500; margin-bottom: 4px; }
+    .sev-desc  { font-size: 0.82rem; opacity: 0.85; line-height: 1.4; }
+
+    .popup-card {
+        background: white; border-radius: 10px;
+        padding: 14px 16px; border: 1px solid #e9ecef;
+        margin-bottom: 10px;
     }
-    .sev-none    { background: #d4edda; color: #155724; }
-    .sev-low     { background: #fff3cd; color: #856404; }
-    .sev-medium  { background: #fde8d8; color: #8a3a00; }
-    .sev-high    { background: #f8d7da; color: #721c24; }
-    .sev-severe  { background: #c0392b; color: #fff; }
-    .preset-pill {
-        display: inline-block; cursor: pointer;
-        border: 1px solid #dee2e6; border-radius: 20px;
-        padding: 4px 12px; font-size: 0.82rem;
-        margin: 3px; background: #fff;
-        transition: all 0.2s;
+    .stat-row { display:flex; gap:12px; margin-top:8px; flex-wrap:wrap; }
+    .stat-box { background:#f8f9fa; border-radius:8px; padding:8px 12px; flex:1; min-width:80px; }
+    .stat-val  { font-size:1.1rem; font-weight:500; color:#212529; }
+    .stat-lbl  { font-size:0.72rem; color:#6c757d; margin-top:1px; }
+
+    .preset-btn { margin: 3px 0; }
+    .nav-btn {
+        display:inline-block; padding:6px 14px; border-radius:20px;
+        border:1px solid #dee2e6; font-size:0.82rem; cursor:pointer;
+        background:white; margin:3px;
     }
+    .nav-btn.active { background:#212529; color:white; border-color:#212529; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Load data & models ────────────────────────────────────────────────────────
+# ── Load ──────────────────────────────────────────────────────────────────────
 @st.cache_data
 def load_data():
     df = pd.read_csv("data/coral_clean.csv", parse_dates=["date"])
@@ -60,185 +69,382 @@ def load_models():
     clf = joblib.load("models/clf_pipeline.joblib")
     reg = joblib.load("models/reg_pipeline.joblib")
     pre = joblib.load("models/presets.joblib")
-    # SHAP explainers require the shap package — load lazily so the rest
-    # of the app works even if shap isn't installed in this environment.
     try:
-        import shap  # noqa: F401  (just verify it's importable)
+        import shap  # noqa
         e_c = joblib.load("models/explainer_clf.joblib")
         e_r = joblib.load("models/explainer_reg.joblib")
-    except (ImportError, Exception):
+    except Exception:
         e_c, e_r = None, None
     return clf, reg, e_c, e_r, pre
 
+@st.cache_data
+def build_eco_stats(df):
+    # Group only by ecoregion — avoids duplicates in dropdown when the same
+    # ecoregion spans multiple ocean/realm combinations in the raw data.
+    stats = df.groupby('ecoregion').agg(
+        n=('percent_bleaching','count'),
+        avg_bleaching=('percent_bleaching','mean'),
+        avg_dhw=('ssta_dhw','mean'),
+        avg_ssta=('ssta','mean'),
+        avg_sst=('sst','mean'),
+        avg_depth=('depth_m','mean'),
+        avg_freq=('ssta_frequency','mean'),
+        peak_pct=('percent_bleaching','max'),
+        lat=('latitude','mean'),
+        lon=('longitude','mean'),
+        ocean=('ocean', lambda x: x.mode()[0]),
+        realm=('realm', lambda x: x.mode()[0]),
+        avg_exposure=('exposure', lambda x: x.mode()[0]),
+    ).query('n >= 20').reset_index()
+    return stats
+
 df = load_data()
 clf_pipeline, reg_pipeline, explainer_clf, explainer_reg, PRESETS = load_models()
+eco_stats = build_eco_stats(df)
 
-FEATURES   = ["ssta_dhw","ssta_frequency","ssta","sst","depth_m","bleaching_level","exposure","ocean"]
-NUM_FEATS  = ["ssta_dhw","ssta_frequency","ssta","sst","depth_m"]
-CAT_FEATS  = ["bleaching_level","exposure","ocean"]
+FEATURES  = ["ssta_dhw","ssta_frequency","ssta","sst","depth_m","bleaching_level","exposure","ocean"]
+NUM_FEATS = ["ssta_dhw","ssta_frequency","ssta","sst","depth_m"]
+CAT_FEATS = ["bleaching_level","exposure","ocean"]
 FEAT_NAMES = NUM_FEATS + CAT_FEATS
 
 FEAT_LABELS = {
-    "ssta_dhw":        "Degree Heating Weeks (DHW)",
-    "ssta_frequency":  "SSTA frequency",
-    "ssta":            "SST anomaly (°C)",
-    "sst":             "Sea surface temp (°C)",
+    "ssta_dhw":        "Thermal stress weeks",
+    "ssta_frequency":  "Stress frequency",
+    "ssta":            "Temp. above normal (°C)",
+    "sst":             "Ocean temperature (°C)",
     "depth_m":         "Depth (m)",
     "bleaching_level": "Measurement level",
     "exposure":        "Reef exposure",
     "ocean":           "Ocean basin",
 }
 
-def predict_bleaching(X_input: pd.DataFrame) -> dict:
+SEVERITY_LEVELS = [
+    (0,   10,  "🟢", "Healthy",   "sev-healthy",
+     "Coral is thriving. Temperatures are within normal range and bleaching is unlikely."),
+    (10,  25,  "🟡", "Stressed",  "sev-stressed",
+     "Coral is under mild heat stress. Some colonies may show early signs of bleaching."),
+    (25,  50,  "🟠", "Bleaching", "sev-bleaching",
+     "Active bleaching event. Corals are expelling their symbiotic algae and turning white."),
+    (50,  80,  "🔴", "Severe",    "sev-severe",
+     "Severe bleaching across the reef. Prolonged stress at this level leads to coral death."),
+    (80,  101, "⚫", "Critical",  "sev-dead",
+     "Critical conditions. Widespread coral mortality expected if stress continues."),
+]
+
+def get_severity(pct):
+    for lo, hi, icon, label, cls, desc in SEVERITY_LEVELS:
+        if lo <= pct < hi:
+            return icon, label, cls, desc
+    return "⚫", "Critical", "sev-dead", SEVERITY_LEVELS[-1][5]
+
+def predict_bleaching(X_input):
     X    = X_input.reset_index(drop=True)
     prob = clf_pipeline.predict_proba(X)[:, 1]
     blch = prob >= 0.5
     sev  = np.full(len(X), np.nan)
     if blch.any():
         sev[blch] = np.expm1(reg_pipeline.predict(X[blch])).clip(0, 100)
-    return {
-        "bleached":    blch,
-        "probability": prob,
-        "severity":    sev,
-        "final":       np.where(blch, sev, 0.0)
+    return {"bleached": blch, "probability": prob,
+            "severity": sev, "final": np.where(blch, sev, 0.0)}
+
+# ── Session state defaults ────────────────────────────────────────────────────
+if "page" not in st.session_state:
+    st.session_state.page = "explore"
+if "selected_eco" not in st.session_state:
+    st.session_state.selected_eco = None
+if "slider_vals" not in st.session_state:
+    st.session_state.slider_vals = {
+        "ssta_dhw": 2.0, "ssta_frequency": 3.0, "ssta": 0.3,
+        "sst": 28.0, "depth_m": 8.0,
+        "bleaching_level": "Colony", "exposure": "Exposed", "ocean": "Atlantic"
     }
 
-def severity_label(pct):
-    if pct == 0:   return "No bleaching", "sev-none"
-    if pct < 10:   return "Low",          "sev-low"
-    if pct < 30:   return "Moderate",     "sev-medium"
-    if pct < 60:   return "High",         "sev-high"
-    return             "Severe",           "sev-severe"
+def load_preset(vals):
+    st.session_state.slider_vals = dict(vals)
+    st.session_state.page = "explore"
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## 🪸 Coral Bleaching Monitor")
-    st.markdown("---")
-    page = st.radio(
-        "Navigation",
-        ["🗺️ Global Map", "📈 Exploration", "🔬 Live Predictor"],
-        label_visibility="collapsed"
-    )
-    st.markdown("---")
+def load_eco(eco_name):
+    row = eco_stats[eco_stats.ecoregion == eco_name].iloc[0]
+    st.session_state.slider_vals = {
+        "ssta_dhw":       round(float(row.avg_dhw), 1),
+        "ssta_frequency": round(float(row.avg_freq), 1),
+        "ssta":           round(float(row.avg_ssta), 2),
+        "sst":            round(float(row.avg_sst), 1),
+        "depth_m":        round(float(row.avg_depth), 1),
+        "bleaching_level":"Colony",
+        "exposure":       str(row.avg_exposure),
+        "ocean":          str(row.ocean),
+    }
+    st.session_state.selected_eco = eco_name
+    st.session_state.page = "explore"
+
+# ── Top nav ───────────────────────────────────────────────────────────────────
+st.markdown("### 🪸 Coral Bleaching Monitor")
+col_nav1, col_nav2, col_nav3 = st.columns([2, 2, 6])
+with col_nav1:
+    if st.button("🌊 Explore reefs", use_container_width=True,
+                 type="primary" if st.session_state.page == "explore" else "secondary"):
+        st.session_state.page = "explore"
+        st.rerun()
+with col_nav2:
+    if st.button("📊 Data & science", use_container_width=True,
+                 type="primary" if st.session_state.page == "data" else "secondary"):
+        st.session_state.page = "data"
+        st.rerun()
+
+st.markdown("---")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE 1 — EXPLORE REEFS
+# ══════════════════════════════════════════════════════════════════════════════
+if st.session_state.page == "explore":
+
     st.markdown(
-        "**Dataset:** 23,203 observations · 1980–2020 · "
-        "5 ocean basins\n\n"
-        "**Model:** XGBoost two-stage pipeline\n"
-        "Stage 1: bleaching classifier\n"
-        "Stage 2: severity regressor"
+        "**Search for a reef** in the dropdown to load its real conditions, then use the sliders "
+        "to ask *what if* — what happens if the ocean warms? If thermal stress doubles?"
     )
-    st.markdown("---")
-    st.caption("Built with Streamlit · Data: Global Coral Reef Monitoring")
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PAGE 1 — GLOBAL MAP
-# ═══════════════════════════════════════════════════════════════════════════════
-if page == "🗺️ Global Map":
-    st.title("Global Coral Bleaching Distribution")
+    left, right = st.columns([3, 2], gap="large")
 
-    # ── Filters
-    col1, col2, col3 = st.columns([2, 2, 2])
-    with col1:
-        year_range = st.slider(
-            "Year range", int(df.year.min()), int(df.year.max()),
-            (1990, 2020), step=1
+    # ── LEFT: Map + popup ─────────────────────────────────────────────────────
+    with left:
+
+        # Build map data — one point per ecoregion (cleaner than 23k points)
+        map_eco = eco_stats.copy()
+        map_eco["color"] = map_eco["avg_bleaching"].apply(lambda v: [
+            int(59  + min(v/100, 1) * (239 - 59)),
+            int(130 + min(v/100, 1) * (68  - 130)),
+            int(246 + min(v/100, 1) * (68  - 246)),
+            200
+        ])
+        map_eco["radius"] = map_eco["n"].apply(lambda n: max(80000, min(n * 400, 500000)))
+        map_eco["avg_bleaching_str"] = map_eco["avg_bleaching"].apply(lambda x: f"{x:.1f}")
+
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=map_eco,
+            get_position=["lon","lat"],
+            get_fill_color="color",
+            get_radius="radius",
+            radius_min_pixels=5,
+            radius_max_pixels=20,
+            pickable=True,
         )
-    with col2:
-        oceans = st.multiselect(
-            "Ocean basins", sorted(df.ocean.unique()),
-            default=sorted(df.ocean.unique())
+        view = pdk.ViewState(latitude=10, longitude=10, zoom=0.8, pitch=0)
+        tooltip = {
+            "html": "<b>{ecoregion}</b><br/>{ocean}<br/>Avg bleaching: {avg_bleaching_str}%",
+            "style": {"background":"white","padding":"8px 10px",
+                      "border-radius":"6px","font-size":"12px","color":"#212529"}
+        }
+
+        # Ecoregion selector via selectbox (proxy for map click)
+        def on_reef_select():
+            sel = st.session_state.eco_selector
+            if sel and sel != "— search here —":
+                load_eco(sel)
+
+        st.selectbox(
+            "Or search for a reef:",
+            ["— search here —"] + sorted(eco_stats.ecoregion.tolist()),
+            index=0,
+            key="eco_selector",
+            on_change=on_reef_select
         )
-    with col3:
-        color_by = st.selectbox(
-            "Color points by",
-            ["% Bleaching", "SST anomaly (SSTA)", "Degree Heating Weeks"]
+
+        st.pydeck_chart(pdk.Deck(
+            layers=[layer], initial_view_state=view, tooltip=tooltip,
+            map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+            height=380
+        ))
+
+        st.caption("Point size = number of observations. Color: blue → low bleaching, red → high. Use the dropdown above to explore a reef.")
+
+        # ── Popup card when ecoregion selected ───────────────────────────────
+        sel_eco = st.session_state.selected_eco
+        if sel_eco and sel_eco in eco_stats.ecoregion.values:
+            row = eco_stats[eco_stats.ecoregion == sel_eco].iloc[0]
+            icon, label, cls, desc = get_severity(row.avg_bleaching)
+
+            st.markdown(f"""
+            <div class="popup-card">
+                <div style="font-size:1rem;font-weight:500;color:#212529;margin-bottom:2px;">
+                    {sel_eco}
+                </div>
+                <div style="font-size:0.8rem;color:#6c757d;margin-bottom:10px;">
+                    {row.ocean} · {row.realm}
+                </div>
+                <div class="stat-row">
+                    <div class="stat-box">
+                        <div class="stat-val">{row.avg_bleaching:.0f}%</div>
+                        <div class="stat-lbl">avg bleaching</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-val">{row.avg_sst:.1f}°C</div>
+                        <div class="stat-lbl">ocean temp</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-val">{row.avg_dhw:.1f}</div>
+                        <div class="stat-lbl">thermal stress wks</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-val">{int(row.n):,}</div>
+                        <div class="stat-lbl">observations</div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if st.button(f"🔬 Explore this reef →", use_container_width=True, type="primary"):
+                load_eco(sel_eco)
+                st.rerun()
+
+    # ── RIGHT: Sliders + prediction ───────────────────────────────────────────
+    with right:
+
+        if st.session_state.selected_eco:
+            st.markdown(f"**Exploring:** {st.session_state.selected_eco}")
+        else:
+            st.markdown("**What if conditions were...**")
+
+        # ── Preset selector — rendered BEFORE sliders so click updates values first
+        preset_descriptions = {
+            "El Niño 1998 (Indian Ocean)":       "The most devastating bleaching event in recorded history — 16% of the world's corals died.",
+            "El Niño 2016 (Great Barrier Reef)": "The second mass bleaching event in two years killed two-thirds of shallow corals in the northern GBR.",
+            "Healthy reef":                      "Normal conditions in a healthy, well-protected reef. What the ocean used to look like.",
+            "Red Sea (resilient)":               "The Red Sea hosts unusually heat-tolerant corals that can survive conditions that kill others.",
+            "Caribbean 2005 event":              "Record sea temperatures bleached over 80% of corals across the Caribbean in a single season.",
+        }
+        preset_clicked = None
+        with st.expander("Load a historical scenario", expanded=False):
+            for name, vals in PRESETS.items():
+                col_a, col_b = st.columns([2, 1])
+                with col_a:
+                    st.markdown(
+                        f"<div style='font-size:0.82rem;font-weight:500;color:var(--color-text-primary)'>{name}</div>"
+                        f"<div style='font-size:0.75rem;color:#6c757d;margin-bottom:6px'>{preset_descriptions.get(name,'')}</div>",
+                        unsafe_allow_html=True
+                    )
+                with col_b:
+                    if st.button("Load", key=f"preset_{name}", use_container_width=True):
+                        preset_clicked = (name, vals)
+
+        # Apply preset click OUTSIDE expander then rerun — this is the only reliable pattern
+        if preset_clicked:
+            st.session_state.slider_vals = dict(preset_clicked[1])
+            st.session_state.selected_eco = None
+            st.rerun()
+
+        # Read current values (after any preset may have been applied)
+        v = st.session_state.slider_vals
+
+        st.markdown("#### Adjust conditions")
+
+        ssta_dhw = st.slider(
+            "🌡️ Thermal stress (weeks above threshold)",
+            0.0, 20.0, float(v["ssta_dhw"]), 0.1,
+            help="How many weeks the ocean has been dangerously warm. Above 4 weeks triggers bleaching. Above 8 weeks can kill coral."
+        )
+        ssta = st.slider(
+            "🌊 Temperature above normal (°C)",
+            -3.0, 5.0, float(v["ssta"]), 0.1,
+            help="How many degrees warmer the ocean is compared to the long-term average for this location."
+        )
+        sst = st.slider(
+            "🌡️ Ocean temperature (°C)",
+            14.0, 37.0, float(v["sst"]), 0.1,
+            help="The actual sea surface temperature. Most reef corals live between 23–29°C."
+        )
+        ssta_frequency = st.slider(
+            "📊 How often temperatures spike",
+            0.0, 20.0, float(v["ssta_frequency"]), 0.5,
+            help="How frequently this location experiences temperature anomalies. Chronic stress is more damaging than occasional spikes."
+        )
+        depth_m = st.slider(
+            "🤿 Depth (m)",
+            0.0, 50.0, float(v["depth_m"]), 0.5,
+            help="Depth of the coral. Deeper corals are more protected from surface heat but have less access to cooling water movement."
         )
 
-    col_map = {"% Bleaching": "percent_bleaching",
-               "SST anomaly (SSTA)": "ssta",
-               "Degree Heating Weeks": "ssta_dhw"}
-    col = col_map[color_by]
+        # Ocean and exposure are set automatically from the selected reef or preset
+        # and passed to the model silently — no need to expose them to the user.
+        exposure = v.get("exposure", "Exposed")
+        ocean    = v.get("ocean", "Atlantic")
 
-    filtered = df[
-        (df.year >= year_range[0]) &
-        (df.year <= year_range[1]) &
-        (df.ocean.isin(oceans))
-    ].copy()
+        # ── Run model ─────────────────────────────────────────────────────────
+        X_input = pd.DataFrame([{
+            "ssta_dhw": ssta_dhw, "ssta_frequency": ssta_frequency,
+            "ssta": ssta, "sst": sst, "depth_m": depth_m,
+            "bleaching_level": "Colony", "exposure": exposure, "ocean": ocean
+        }])[FEATURES]
 
-    # Normalise 0-255 for pydeck color
-    vmin, vmax = filtered[col].quantile(0.02), filtered[col].quantile(0.98)
-    def to_rgb(val):
-        t = np.clip((val - vmin) / max(vmax - vmin, 0.001), 0, 1)
-        r = int(59  + t*(239 - 59))
-        g = int(130 + t*(68  - 130))
-        b = int(246 + t*(68  - 246))
-        return [r, g, b, 180]
+        result  = predict_bleaching(X_input)
+        pct     = float(result["final"][0])
+        prob    = float(result["probability"][0])
+        icon, label, cls, desc = get_severity(pct)
 
-    filtered["color"] = filtered[col].apply(to_rgb)
-    map_data = filtered[["latitude","longitude","percent_bleaching",
-                          "ssta","ssta_dhw","ocean","year","depth_m","color"]].copy()
+        st.markdown("#### Predicted outcome")
 
-    # ── KPI row
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Observations", f"{len(filtered):,}")
-    k2.metric("Avg bleaching", f"{filtered.percent_bleaching.mean():.1f}%")
-    k3.metric("Peak year", str(filtered.groupby('year')['percent_bleaching'].mean().idxmax()))
-    k4.metric("Severely bleached", f"{(filtered.percent_bleaching > 50).mean():.1%}")
+        st.markdown(f"""
+        <div class="severity-card {cls}">
+            <div class="sev-icon">{icon}</div>
+            <div class="sev-label">{label}</div>
+            <div style="font-size:1.6rem;font-weight:500;margin:4px 0">{pct:.0f}% bleaching</div>
+            <div class="sev-desc">{desc}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # ── Map
-    layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=map_data,
-        get_position=["longitude","latitude"],
-        get_fill_color="color",
-        get_radius=40000,
-        radius_min_pixels=3,
-        radius_max_pixels=12,
-        pickable=True,
+        # Plain-English sentence
+        if pct == 0:
+            sentence = "Under these conditions, bleaching is unlikely."
+        elif pct < 10:
+            sentence = f"About 1 in {max(2,int(100/max(pct,1)))} corals would show signs of bleaching."
+        elif pct < 50:
+            sentence = f"Roughly {pct:.0f}% of corals in this area would bleach — a significant event."
+        else:
+            sentence = f"Over half the corals ({pct:.0f}%) would bleach — a mass bleaching event."
+
+        st.markdown(f"*{sentence}*")
+
+        # DHW context bar
+        dhw_pct = min(ssta_dhw / 20, 1.0) * 100
+        dhw_color = "#28a745" if ssta_dhw < 4 else ("#ffc107" if ssta_dhw < 8 else "#dc3545")
+        st.markdown(f"""
+        <div style="margin:10px 0 4px;font-size:0.8rem;color:#6c757d">
+            Thermal stress level
+        </div>
+        <div style="background:#e9ecef;border-radius:6px;height:10px;overflow:hidden;">
+            <div style="width:{dhw_pct:.0f}%;background:{dhw_color};height:100%;border-radius:6px;transition:width 0.3s;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:0.7rem;color:#adb5bd;margin-top:3px;">
+            <span>None</span><span>Bleaching threshold (4 wks)</span><span>Mortality (8 wks)</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Historical comparison
+        similar = df[
+            (df.ssta_dhw.between(max(0, ssta_dhw - 1.5), ssta_dhw + 1.5)) &
+            (df.ocean == ocean)
+        ]
+        if len(similar) > 10:
+            hist_avg = similar.percent_bleaching.mean()
+            st.info(
+                f"📚 {len(similar)} real observations in the **{ocean}** with similar thermal stress "
+                f"averaged **{hist_avg:.0f}%** bleaching historically."
+            )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE 2 — DATA & SCIENCE
+# ══════════════════════════════════════════════════════════════════════════════
+elif st.session_state.page == "data":
+
+    st.markdown(
+        "The data and science behind the predictions. "
+        "23,203 observations collected between 1980 and 2020 across 5 ocean basins."
     )
-    view = pdk.ViewState(latitude=5, longitude=20, zoom=1.4, pitch=0)
-    tooltip = {
-        "html": "<b>{ocean}</b><br/>Year: {year}<br/>"
-                "Bleaching: {percent_bleaching}%<br/>"
-                "SSTA: {ssta}°C<br/>DHW: {ssta_dhw}<br/>Depth: {depth_m}m",
-        "style": {"background":"white","padding":"8px","border-radius":"6px","font-size":"12px"}
-    }
-    st.pydeck_chart(pdk.Deck(
-        layers=[layer], initial_view_state=view, tooltip=tooltip,
-        map_style="mapbox://styles/mapbox/light-v10"
-    ))
 
-    # ── Legend
-    lc1, lc2 = st.columns([1, 3])
-    with lc1:
-        st.markdown(f"**Low** → **High** `{color_by}`")
-        st.markdown(
-            '<div style="height:12px;width:200px;border-radius:6px;'
-            'background:linear-gradient(to right,#3b82f6,#f59e0b,#ef4444)"></div>',
-            unsafe_allow_html=True
-        )
+    tab1, tab2, tab3 = st.tabs(["📈 40 years of bleaching", "🌊 Environmental drivers", "🤖 How the model works"])
 
-    # ── Ocean breakdown table
-    st.markdown("### Average bleaching by ocean basin")
-    ocean_stats = (
-        filtered.groupby("ocean")["percent_bleaching"]
-        .agg(["mean","median","count"])
-        .round(2)
-        .rename(columns={"mean":"Avg %","median":"Median %","count":"Observations"})
-        .sort_values("Avg %", ascending=False)
-        .reset_index()
-    )
-    st.dataframe(ocean_stats, use_container_width=True, hide_index=True)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PAGE 2 — EXPLORATION
-# ═══════════════════════════════════════════════════════════════════════════════
-elif page == "📈 Exploration":
-    st.title("Data Exploration")
-    tab1, tab2, tab3 = st.tabs(["Temporal trends", "Environmental drivers", "Distributions"])
-
-    # ── Tab 1: Temporal
     with tab1:
         yearly = df.groupby("year").agg(
             avg_bleaching=("percent_bleaching","mean"),
@@ -252,360 +458,135 @@ elif page == "📈 Exploration":
             x=yearly.year, y=yearly.avg_bleaching,
             name="Avg % bleaching", fill="tozeroy",
             line=dict(color="#D85A30", width=2),
-            fillcolor="rgba(216,90,48,0.15)"
+            fillcolor="rgba(216,90,48,0.12)"
         ))
-        for yr, label in [(1998,"El Niño 1998"),(2016,"El Niño 2016")]:
-            fig.add_vline(x=yr, line_dash="dash", line_color="#888780",
-                          annotation_text=label, annotation_position="top right")
+        for yr, label in [(1998,"1998 mass bleaching\n(El Niño)"),(2016,"2016 mass bleaching\n(El Niño)")]:
+            fig.add_vline(x=yr, line_dash="dash", line_color="#aaa",
+                          annotation_text=label, annotation_position="top right",
+                          annotation_font_size=11)
         fig.update_layout(
-            title="Average bleaching % over time",
+            title="Average coral bleaching over time (1980–2020)",
             xaxis_title="Year", yaxis_title="Avg % bleaching",
-            hovermode="x unified", height=350
+            hovermode="x unified", height=340,
+            yaxis=dict(ticksuffix="%")
         )
         st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            "⚠️ Pre-1998 data is sparse — fewer than 30 observations per year before 1997. "
+            "The spike in the 1980s reflects isolated early studies, not necessarily higher bleaching."
+        )
 
         col1, col2 = st.columns(2)
         with col1:
-            fig2 = px.line(yearly, x="year", y="avg_ssta", color_discrete_sequence=["#1192e8"],
-                           title="Average SST anomaly (SSTA) per year")
-            fig2.add_hline(y=0, line_dash="dot", line_color="#888")
-            fig2.update_layout(height=280)
+            ocean_order = df.groupby("ocean")["percent_bleaching"].mean().sort_values(ascending=False).index
+            fig2 = px.bar(
+                df.groupby("ocean")["percent_bleaching"].mean().reset_index().sort_values("percent_bleaching", ascending=False),
+                x="ocean", y="percent_bleaching",
+                color_discrete_sequence=["#1192e8"],
+                title="Average bleaching by ocean",
+                labels={"ocean":"","percent_bleaching":"Avg % bleaching"}
+            )
+            fig2.update_layout(height=280, yaxis=dict(ticksuffix="%"))
             st.plotly_chart(fig2, use_container_width=True)
+
         with col2:
-            fig3 = px.bar(yearly, x="year", y="n", color_discrete_sequence=["#a56eff"],
-                          title="Observations per year")
-            fig3.update_layout(height=280)
+            eco_top = eco_stats.nlargest(10, "avg_bleaching")
+            fig3 = px.bar(
+                eco_top, x="avg_bleaching", y="ecoregion", orientation="h",
+                color_discrete_sequence=["#D85A30"],
+                title="Top 10 most affected ecoregions",
+                labels={"avg_bleaching":"Avg % bleaching","ecoregion":""}
+            )
+            fig3.update_layout(height=340, xaxis=dict(ticksuffix="%"))
             st.plotly_chart(fig3, use_container_width=True)
 
-        st.info(
-            "⚠️ **Sampling note:** data collection grew dramatically after 1998. "
-            "Pre-1998 averages are based on very few observations — interpret with caution."
-        )
-
-    # ── Tab 2: Drivers
     with tab2:
         col1, col2 = st.columns(2)
         with col1:
-            # DHW bins
             df["dhw_bin"] = pd.cut(
-                df["ssta_dhw"],
-                bins=[-0.1,0,4,8,12,60],
-                labels=["0 (no stress)","0–4 DHW","4–8 DHW","8–12 DHW",">12 DHW"]
+                df["ssta_dhw"], bins=[-0.1,0,4,8,12,60],
+                labels=["0 (no stress)","0–4 weeks","4–8 weeks","8–12 weeks",">12 weeks"]
             )
             dhw_stats = df.groupby("dhw_bin", observed=True)["percent_bleaching"].mean().reset_index()
             fig = px.bar(dhw_stats, x="dhw_bin", y="percent_bleaching",
                          color_discrete_sequence=["#BA7517"],
-                         title="Mean bleaching by Degree Heating Weeks threshold",
-                         labels={"dhw_bin":"DHW threshold","percent_bleaching":"Mean % bleaching"})
-            fig.add_hline(y=4, line_dash="dash", line_color="#D85A30",
-                          annotation_text="DHW=4 bleaching threshold")
-            fig.update_layout(height=340)
+                         title="Bleaching vs thermal stress duration",
+                         labels={"dhw_bin":"Weeks above bleaching threshold",
+                                 "percent_bleaching":"Mean % bleaching"})
+            fig.add_annotation(x="4–8 weeks", y=dhw_stats[dhw_stats.dhw_bin=="4–8 weeks"]["percent_bleaching"].values[0]+3,
+                                text="Bleaching\nthreshold", showarrow=False, font_size=10, font_color="#888")
+            fig.update_layout(height=320, yaxis=dict(ticksuffix="%"))
             st.plotly_chart(fig, use_container_width=True)
 
         with col2:
-            # Depth bins
-            df["depth_bucket"] = pd.cut(
-                df["depth_m"], bins=[0,5,10,20,50],
-                labels=["0–5m","5–10m","10–20m","20–50m"]
-            )
+            df["depth_bucket"] = pd.cut(df["depth_m"], bins=[0,5,10,20,50],
+                                         labels=["0–5m","5–10m","10–20m","20–50m"])
             dep_stats = df.groupby("depth_bucket", observed=True)["percent_bleaching"].mean().reset_index()
             fig = px.bar(dep_stats, x="depth_bucket", y="percent_bleaching",
                          color_discrete_sequence=["#1D9E75"],
-                         title="Mean bleaching by depth",
+                         title="Bleaching by depth",
                          labels={"depth_bucket":"Depth","percent_bleaching":"Mean % bleaching"})
-            fig.update_layout(height=340)
+            fig.update_layout(height=320, yaxis=dict(ticksuffix="%"))
             st.plotly_chart(fig, use_container_width=True)
 
-        # Scatter DHW vs bleaching
-        sample = df.sample(4000, random_state=42)
-        fig = px.scatter(
-            sample, x="ssta_dhw", y="percent_bleaching", color="ocean",
-            opacity=0.4, trendline="lowess",
-            title="DHW vs % bleaching (sample n=4,000)",
-            labels={"ssta_dhw":"Degree Heating Weeks","percent_bleaching":"% bleaching"}
-        )
+        sample = df.sample(3000, random_state=42)
+        fig = px.scatter(sample, x="ssta_dhw", y="percent_bleaching", color="ocean",
+                         opacity=0.35, trendline="lowess",
+                         title="Thermal stress vs bleaching — each dot is a real observation",
+                         labels={"ssta_dhw":"Thermal stress weeks","percent_bleaching":"% bleaching"})
         fig.add_vline(x=4, line_dash="dash", line_color="orange",
-                      annotation_text="DHW=4 (bleaching threshold)")
+                      annotation_text="Bleaching threshold (4 weeks)")
         fig.add_vline(x=8, line_dash="dash", line_color="red",
-                      annotation_text="DHW=8 (mortality threshold)")
-        fig.update_layout(height=380)
+                      annotation_text="Mortality threshold (8 weeks)")
+        fig.update_layout(height=380, yaxis=dict(ticksuffix="%"))
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── Tab 3: Distributions
     with tab3:
-        col1, col2 = st.columns(2)
-        with col1:
-            fig = px.histogram(df, x="percent_bleaching", nbins=60,
-                               color_discrete_sequence=["#D85A30"],
-                               title="Distribution of % bleaching",
-                               labels={"percent_bleaching":"% bleaching"})
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+        st.markdown("""
+        #### How the prediction works
 
-        with col2:
-            ocean_order = df.groupby("ocean")["percent_bleaching"].mean().sort_values(ascending=False).index
-            fig = px.box(df, x="ocean", y="percent_bleaching",
-                         category_orders={"ocean": list(ocean_order)},
-                         color="ocean", title="Bleaching distribution by ocean",
-                         labels={"percent_bleaching":"% bleaching","ocean":"Ocean"})
-            fig.update_layout(height=300, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+        The model uses a **two-stage approach** — because coral bleaching data has a quirk:
+        nearly 40% of all observations show 0% bleaching. A single model would be biased
+        toward predicting "not much" all the time.
 
-        fig = px.box(df, x="exposure", y="percent_bleaching", color="bleaching_level",
-                     title="Bleaching by exposure and measurement level",
-                     labels={"percent_bleaching":"% bleaching","exposure":"Exposure"})
-        fig.update_layout(height=340)
-        st.plotly_chart(fig, use_container_width=True)
+        **Stage 1 — Is bleaching happening?**
+        A classifier looks at the conditions and decides: is this a bleaching event or not?
 
+        **Stage 2 — How bad is it?**
+        If Stage 1 says yes, a second model estimates the severity (0–100%).
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# PAGE 3 — LIVE PREDICTOR
-# ═══════════════════════════════════════════════════════════════════════════════
-elif page == "🔬 Live Predictor":
-    st.title("Live Bleaching Predictor")
-    st.markdown(
-        "Adjust the environmental conditions using the sliders below, "
-        "or load a **historical scenario** to see how the model responds. "
-        "The SHAP chart explains *why* the model makes each prediction."
-    )
+        Both models are XGBoost — a type of gradient boosting algorithm that builds hundreds
+        of small decision trees and combines them. The model was trained on observations before
+        2016 and tested on 2016–2020 data, including the second-worst bleaching event in history.
+        """)
 
-    # ── Presets
-    st.markdown("**Historical scenarios:**")
-    preset_cols = st.columns(len(PRESETS))
-    selected_preset = None
-    for i, (name, vals) in enumerate(PRESETS.items()):
-        with preset_cols[i]:
-            if st.button(name, key=f"preset_{i}", use_container_width=True):
-                selected_preset = vals
+        # Feature importance
+        if explainer_clf is not None:
+            st.markdown("#### What drives the prediction?")
+            try:
+                pre_clf = clf_pipeline.named_steps["pre"]
+                X_sample = df[FEATURES].sample(500, random_state=42)
+                X_t = pre_clf.transform(X_sample)
+                shap_vals = np.abs(explainer_clf.shap_values(X_t)).mean(axis=0)
 
-    st.markdown("---")
-
-    # ── Sliders — initialise from preset or defaults
-    defaults = selected_preset or {
-        "ssta_dhw": 2.0, "ssta_frequency": 3.0, "ssta": 0.3,
-        "sst": 28.0, "depth_m": 8.0,
-        "bleaching_level": "Colony", "exposure": "Exposed", "ocean": "Atlantic"
-    }
-    if selected_preset:
-        for k, v in selected_preset.items():
-            st.session_state[f"slider_{k}"] = v
-
-    left, right = st.columns([1, 1])
-
-    with left:
-        st.markdown("### Environmental conditions")
-        ssta_dhw = st.slider(
-            "🌡️ Degree Heating Weeks (DHW)",
-            0.0, 20.0, float(defaults["ssta_dhw"]), 0.1,
-            key="slider_ssta_dhw",
-            help="Accumulated thermal stress above the bleaching threshold. DHW ≥ 4 triggers bleaching; DHW ≥ 8 can cause mortality."
-        )
-        ssta = st.slider(
-            "🌊 SST Anomaly — SSTA (°C)",
-            -3.0, 5.0, float(defaults["ssta"]), 0.1,
-            key="slider_ssta",
-            help="How many degrees above the long-term average is the sea surface temperature."
-        )
-        sst = st.slider(
-            "🌡️ Sea Surface Temp (°C)",
-            14.0, 37.0, float(defaults["sst"]), 0.1,
-            key="slider_sst",
-            help="Absolute sea surface temperature in Celsius."
-        )
-        ssta_frequency = st.slider(
-            "📊 SSTA Frequency",
-            0.0, 20.0, float(defaults["ssta_frequency"]), 0.5,
-            key="slider_ssta_frequency",
-            help="How often temperature anomalies occur in this location — chronic vs acute stress."
-        )
-        depth_m = st.slider(
-            "🤿 Depth (m)",
-            0.0, 50.0, float(defaults["depth_m"]), 0.5,
-            key="slider_depth_m",
-            help="Depth of the coral measurement."
-        )
-
-        st.markdown("### Site characteristics")
-        bleaching_level = st.selectbox(
-            "Measurement level",
-            ["Colony", "Population"],
-            index=0 if defaults["bleaching_level"] == "Colony" else 1,
-            key="slider_bleaching_level",
-            help="Colony = individual colony survey (tends to target stressed corals). Population = broad survey."
-        )
-        exposure = st.selectbox(
-            "Reef exposure",
-            ["Exposed", "Sheltered", "Sometimes"],
-            index=["Exposed","Sheltered","Sometimes"].index(defaults["exposure"]),
-            key="slider_exposure"
-        )
-        ocean = st.selectbox(
-            "Ocean basin",
-            ["Atlantic","Pacific","Indian","Red Sea","Arabian Gulf"],
-            index=["Atlantic","Pacific","Indian","Red Sea","Arabian Gulf"].index(defaults["ocean"]),
-            key="slider_ocean"
-        )
-
-    # ── Run model
-    X_input = pd.DataFrame([{
-        "ssta_dhw": ssta_dhw, "ssta_frequency": ssta_frequency,
-        "ssta": ssta, "sst": sst, "depth_m": depth_m,
-        "bleaching_level": bleaching_level, "exposure": exposure, "ocean": ocean
-    }])[FEATURES]
-
-    result = predict_bleaching(X_input)
-    pct    = float(result["final"][0])
-    prob   = float(result["probability"][0])
-    label, badge_cls = severity_label(pct)
-
-    with right:
-        st.markdown("### Prediction")
-
-        # ── Gauge
-        fig_gauge = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=round(pct, 1),
-            number={"suffix":"%","font":{"size":36}},
-            gauge={
-                "axis": {"range":[0,100], "tickwidth":1},
-                "bar":  {"color":"#D85A30","thickness":0.25},
-                "bgcolor": "white",
-                "steps": [
-                    {"range":[0,10],  "color":"#d4edda"},
-                    {"range":[10,30], "color":"#fff3cd"},
-                    {"range":[30,60], "color":"#fde8d8"},
-                    {"range":[60,100],"color":"#f8d7da"},
-                ],
-                "threshold": {
-                    "line": {"color":"#721c24","width":3},
-                    "thickness": 0.75, "value": pct
-                }
-            }
-        ))
-        fig_gauge.update_layout(height=260, margin=dict(t=20,b=10,l=30,r=30))
-        st.plotly_chart(fig_gauge, use_container_width=True)
-
-        # ── Severity badge + probability
-        st.markdown(
-            f'<div class="severity-badge {badge_cls}">{label}</div>',
-            unsafe_allow_html=True
-        )
-        st.markdown(f"**Bleaching probability:** {prob:.0%}")
-
-        # ── Context from historical data
-        similar = df[
-            (df.ssta_dhw.between(max(0, ssta_dhw-1.5), ssta_dhw+1.5)) &
-            (df.ocean == ocean)
-        ]
-        if len(similar) > 10:
-            hist_avg = similar.percent_bleaching.mean()
-            hist_years = similar.year.value_counts().head(3).index.tolist()
-            st.info(
-                f"📚 Historical comparison: {len(similar)} observations in the **{ocean}** "
-                f"with similar DHW have an average bleaching of **{hist_avg:.1f}%** "
-                f"(most common years: {', '.join(map(str, hist_years))})."
-            )
-
-        # ── DHW context
-        dhw_context = ""
-        if ssta_dhw < 1:
-            dhw_context = "🟢 DHW below 1 — minimal thermal stress, healthy conditions expected."
-        elif ssta_dhw < 4:
-            dhw_context = "🟡 DHW between 1–4 — mild stress, watch for early bleaching signs."
-        elif ssta_dhw < 8:
-            dhw_context = "🟠 DHW between 4–8 — bleaching threshold exceeded, significant bleaching expected."
-        else:
-            dhw_context = "🔴 DHW above 8 — mortality threshold, severe bleaching and coral death likely."
-        st.markdown(dhw_context)
-
-    # ── SHAP explanation
-    st.markdown("---")
-    st.markdown("### Why this prediction? — SHAP feature contributions")
-    st.markdown(
-        "SHAP values show how much each feature pushed the prediction up or down "
-        "from the model's baseline. Positive = increases bleaching risk; Negative = reduces it."
-    )
-
-    if explainer_clf is None:
-        st.warning(
-            "**SHAP not available** — install it and restart the app to see feature explanations:\n"
-            "```\npip install shap\n```"
-        )
-    else:
-        try:
-            pre_clf = clf_pipeline.named_steps["pre"]
-            X_t = pre_clf.transform(X_input)
-            shap_vals = explainer_clf.shap_values(X_t)[0]
-
-            shap_df = pd.DataFrame({
-                "Feature": [FEAT_LABELS[f] for f in FEAT_NAMES],
-                "SHAP value": shap_vals,
-                "Feature value": [
-                    f"{X_input[f].values[0]:.2f}" if f in NUM_FEATS
-                    else str(X_input[f].values[0])
-                    for f in FEAT_NAMES
-                ]
-            }).sort_values("SHAP value")
-
-            shap_df["color"] = shap_df["SHAP value"].apply(
-                lambda v: "#D85A30" if v > 0 else "#1192e8"
-            )
-
-            fig_shap = go.Figure(go.Bar(
-                x=shap_df["SHAP value"],
-                y=shap_df["Feature"],
-                orientation="h",
-                marker_color=shap_df["color"],
-                text=shap_df["Feature value"],
-                textposition="outside",
-            ))
-            fig_shap.update_layout(
-                title="SHAP waterfall — Stage 1 classifier",
-                xaxis_title="SHAP value (impact on bleaching probability)",
-                yaxis_title="",
-                height=380,
-                margin=dict(l=10, r=80),
-                xaxis=dict(zeroline=True, zerolinewidth=1.5, zerolinecolor="#888")
-            )
-            st.plotly_chart(fig_shap, use_container_width=True)
-
-            # Stage 2 SHAP if bleached
-            if result["bleached"][0]:
-                st.markdown("**Stage 2 — Severity regressor SHAP** (only runs when bleaching is detected)")
-                pre_reg = reg_pipeline.named_steps["pre"]
-                X_t2 = pre_reg.transform(X_input)
-                shap_vals2 = explainer_reg.shap_values(X_t2)[0]
-
-                shap_df2 = pd.DataFrame({
+                shap_df = pd.DataFrame({
                     "Feature": [FEAT_LABELS[f] for f in FEAT_NAMES],
-                    "SHAP value": shap_vals2,
-                }).sort_values("SHAP value")
-                shap_df2["color"] = shap_df2["SHAP value"].apply(
-                    lambda v: "#D85A30" if v > 0 else "#1192e8"
+                    "Importance": shap_vals
+                }).sort_values("Importance")
+
+                fig = px.bar(shap_df, x="Importance", y="Feature", orientation="h",
+                             color_discrete_sequence=["#D85A30"],
+                             title="Feature importance — what the model relies on most")
+                fig.update_layout(height=340, xaxis_title="Average impact on prediction")
+                st.plotly_chart(fig, use_container_width=True)
+                st.caption(
+                    "Thermal stress weeks (DHW) and temperature above normal (SSTA) are the "
+                    "strongest predictors — consistent with 40 years of marine biology research."
                 )
+            except Exception as e:
+                st.warning(f"Could not compute feature importance: {e}")
+        else:
+            st.info("Install `shap` to see feature importance charts: `pip install shap`")
 
-                fig_shap2 = go.Figure(go.Bar(
-                    x=shap_df2["SHAP value"],
-                    y=shap_df2["Feature"],
-                    orientation="h",
-                    marker_color=shap_df2["color"],
-                ))
-                fig_shap2.update_layout(
-                    title="SHAP waterfall — Stage 2 regressor",
-                    xaxis_title="SHAP value (impact on bleaching severity)",
-                    height=340,
-                    margin=dict(l=10, r=40),
-                    xaxis=dict(zeroline=True, zerolinewidth=1.5, zerolinecolor="#888")
-                )
-                st.plotly_chart(fig_shap2, use_container_width=True)
-
-        except Exception as e:
-            st.warning(f"SHAP computation failed: {e}")
-
-    st.markdown("---")
-    st.caption(
-        "Model: XGBoost two-stage pipeline trained on observations before 2016, "
-        "evaluated on 2016–2020 (temporal split). "
-        "SHAP values from TreeExplainer. "
-        "Predictions are probabilistic estimates — not ground truth."
-    )
+st.markdown("---")
+st.caption("Data: Global Coral Reef Monitoring Network · 23,203 observations · 1980–2020")
