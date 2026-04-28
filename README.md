@@ -1,67 +1,60 @@
 # 🪸 Coral Bleaching Monitor
 
-An end-to-end data science project exploring global coral bleaching patterns from 1980 to 2020, including an interactive Streamlit dashboard with a live predictive model.
+Coral bleaching is one of the most visible consequences of ocean warming — but the data behind it is rarely accessible to non-scientists. This project turns 40 years of global observations into an interactive web app where anyone can explore how rising temperatures affect coral reefs around the world.
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue) ![Streamlit](https://img.shields.io/badge/Streamlit-1.35+-red) ![XGBoost](https://img.shields.io/badge/Model-XGBoost-orange)
+![Python](https://img.shields.io/badge/Python-3.10+-blue) ![Flask](https://img.shields.io/badge/Flask-3.0+-lightgrey) ![React](https://img.shields.io/badge/React-18-61dafb) ![XGBoost](https://img.shields.io/badge/Model-XGBoost-orange)
 
 ---
 
 ## What it does
 
-- **Explores** 23,203 coral bleaching observations across 5 ocean basins
-- **Predicts** bleaching probability and severity from environmental conditions
-- **Explains** predictions using SHAP feature importance
-- **Visualises** everything in an interactive web dashboard
+Select a reef, adjust environmental conditions, and see the predicted impact on coral bleaching in real time — or load a historical event like the 1998 El Niño to explore what actually happened.
 
-## Dashboard pages
+| Page              | Description                                                                                                           |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 🌊 Explore Reefs  | Interactive world map + sliders to ask _what if_ — what happens if the ocean warms by 2°C? If thermal stress doubles? |
+| 📊 Data & Science | 40 years of bleaching trends, the science behind thermal stress, and how the prediction model works.                  |
 
-| Page              | Description                                                                                                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 🗺️ Global Map     | Interactive pydeck map coloured by bleaching %, SST anomaly, or DHW. Filter by year and ocean basin.                                                                                 |
-| 📈 Exploration    | Temporal trends, El Niño events, DHW thresholds, depth effects, and ocean breakdowns.                                                                                                |
-| 🔬 Live Predictor | Adjust environmental sliders and get an instant bleaching prediction with SHAP explanation. Load historical presets (El Niño 1998, 2016 Great Barrier Reef, Healthy reef, and more). |
-
-## Model
-
-Two-stage XGBoost pipeline trained on a temporal split (train: pre-2016, test: 2016–2020):
-
-- **Stage 1 — Classifier:** predicts whether bleaching occurs (binary)
-- **Stage 2 — Regressor:** predicts severity (%) on positive cases, using a log1p-transformed target
-
-Key features: `ssta_dhw`, `ssta_frequency`, `ssta`, `sst`, `depth_m`, `bleaching_level`, `exposure`, `ocean`
-
-## Project structure
-
-```
-├── data/
-│   └── coral_clean.csv          # Cleaned dataset (23,203 rows)
-├── models/
-│   ├── clf_pipeline.joblib      # Stage 1 classifier + preprocessor
-│   ├── reg_pipeline.joblib      # Stage 2 regressor + preprocessor
-│   ├── explainer_clf.joblib     # SHAP explainer (classifier)
-│   ├── explainer_reg.joblib     # SHAP explainer (regressor)
-│   └── presets.joblib           # Historical scenario presets
-├── coral_data_cleaning.ipynb    # Data cleaning pipeline
-├── coral_eda.ipynb              # Exploratory data analysis
-├── coral_model.ipynb            # Model training & evaluation
-├── streamlit_app.py             # Dashboard
-└── requirements.txt
-```
+---
 
 ## Run locally
 
-```bash
-git clone https://github.com/veronicadeleonh/coral-bleaching-model
-cd coral-bleaching-model
+**Terminal 1 — API:**
 
+```bash
+cd api
 pip install -r requirements.txt
-streamlit run streamlit_app.py
+python app.py
 ```
 
-> **Note:** if using Anaconda, install dependencies with `conda install -c conda-forge shap` and `pip install -r requirements.txt` inside your active environment.
+**Terminal 2 — Frontend:**
 
-## Data source
+```bash
+cd client
+npm install
+npm start
+```
 
-[Global Coral Reef Monitoring — Kaggle](https://www.kaggle.com/datasets/mehrdat/coral-reef-global-bleaching)
+Open `http://localhost:3000`. The React app proxies all `/api/*` calls to Flask on port 5001.
 
-Observations span 1980–2020 across the Atlantic, Pacific, Indian Ocean, Red Sea, and Arabian Gulf.
+---
+
+## For the curious — how it's built
+
+**Data:** 23,203 coral bleaching observations (1980–2020) across the Atlantic, Pacific, Indian Ocean, Red Sea, and Arabian Gulf, sourced from the [Global Coral Reef Monitoring Network](https://www.kaggle.com/datasets/mehrdat/coral-reef-global-bleaching).
+
+**Model:** A two-stage XGBoost pipeline — first predicting whether bleaching occurs (classifier), then estimating severity (regressor). Trained on pre-2016 data, evaluated on 2016–2020. The strongest predictors are Degree Heating Weeks (DHW) and sea surface temperature anomaly (SSTA) — consistent with 40 years of marine biology research.
+
+**Stack:** Flask API · React + Recharts + Leaflet · scikit-learn · XGBoost · SHAP
+
+```
+├── dev-notebooks/          # Data cleaning, EDA, model training
+├── data/                   # Cleaned dataset (23,203 rows)
+├── models/                 # Serialized XGBoost pipelines + SHAP explainers
+├── api/                    # Flask REST API
+└── client/                 # React frontend
+```
+
+---
+
+_Built to make climate science accessible — you don't need to be a marine biologist to understand what's happening to coral reefs._
