@@ -9,26 +9,38 @@ const DEFAULT_VALS = {
   bleaching_level: 'Colony', exposure: 'Exposed', ocean: 'Atlantic',
 };
 
-// Mobile bottom-sheet heights per state
 const MOBILE_HEIGHT = {
   collapsed: '36px',
-  reef:      '220px',
   exploring: '55vh',
 };
 
-const PANEL_BG  = 'rgba(13, 17, 38, 0.97)';
-const PANEL_SHADOW_SIDE   = '-4px 0 32px rgba(0,0,0,0.4)';
-const PANEL_SHADOW_BOTTOM = '0 -4px 32px rgba(0,0,0,0.45)';
+const PANEL_BG          = 'linear-gradient(180deg, #0d2137 0%, #0a3352 100%)';
+const PANEL_SHADOW_SIDE = '-4px 0 32px rgba(0,0,0,0.4)';
+const PANEL_SHADOW_BTM  = '0 -4px 32px rgba(0,0,0,0.45)';
+
+function reefDotColor(pct) {
+  if (pct < 15) return '#2ecc71';
+  if (pct < 40) return '#f39c12';
+  return '#e74c3c';
+}
+
+// Returns bg/textColor matching SeverityCard's STYLES for the historical card
+function historicalStyle(pct) {
+  if (pct < 15) return { bg: 'rgba(46, 204, 113, 0.14)', color: '#6ee7b7' };
+  if (pct < 40) return { bg: 'rgba(243, 156, 18, 0.14)',  color: '#fcd34d' };
+  return           { bg: 'rgba(231, 76, 60, 0.14)',  color: '#fca5a5' };
+}
 
 export default function Explorer() {
-  // Track breakpoint; initialise synchronously so first render is correct
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 1024);
 
-  const [panelState,   setPanelState]   = useState('collapsed');
-  const [selectedReef, setSelectedReef] = useState(null);
-  const [vals,         setVals]         = useState(DEFAULT_VALS);
-  const [result,       setResult]       = useState(null);
-  const [loading,      setLoading]      = useState(false);
+  const [panelState,     setPanelState]     = useState('collapsed');
+  const [selectedReef,   setSelectedReef]   = useState(null);
+  const [vals,           setVals]           = useState(DEFAULT_VALS);
+  const [result,         setResult]         = useState(null);
+  const [loading,        setLoading]        = useState(false);
+  // false = show historical avg; true = model has been triggered by slider/preset
+  const [slidersTouched, setSlidersTouched] = useState(false);
 
   useEffect(() => {
     const onResize = () => setIsDesktop(window.innerWidth >= 1024);
@@ -36,7 +48,7 @@ export default function Explorer() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // ── Prediction ──────────────────────────────────────────────────────────────
+  // ── Prediction ───────────────────────────────────────────────────────────────
   const runPredict = useCallback(async (v) => {
     setLoading(true);
     try {
@@ -54,112 +66,109 @@ export default function Explorer() {
     }
   }, []);
 
-  // Debounced re-predict when sliders move (only while exploring)
+  // Only runs prediction after the user first touches a slider
   useEffect(() => {
-    if (panelState !== 'exploring') return;
+    if (panelState !== 'exploring' || !slidersTouched) return;
     const t = setTimeout(() => runPredict(vals), 300);
     return () => clearTimeout(t);
-  }, [vals, panelState, runPredict]);
+  }, [vals, panelState, slidersTouched, runPredict]);
 
   // ── Event handlers ───────────────────────────────────────────────────────────
+
+  // Reef click → load historical conditions, open panel, NO predict call yet
   function handleReefClick(reef) {
     setSelectedReef(reef);
-    setPanelState('reef');
+    setVals({
+      ssta_dhw:        reef.avg_dhw   ?? DEFAULT_VALS.ssta_dhw,
+      ssta_frequency:  reef.avg_freq  ?? DEFAULT_VALS.ssta_frequency,
+      ssta:            reef.avg_ssta  ?? DEFAULT_VALS.ssta,
+      sst:             reef.avg_sst   ?? DEFAULT_VALS.sst,
+      depth_m:         reef.avg_depth ?? DEFAULT_VALS.depth_m,
+      bleaching_level: 'Colony',
+      exposure:        reef.exposure  || DEFAULT_VALS.exposure,
+      ocean:           reef.ocean     || DEFAULT_VALS.ocean,
+    });
+    setSlidersTouched(false);   // reset — show historical data, not model
+    setResult(null);
+    setPanelState('exploring');
   }
 
-  // Any click on the empty map → back to State 1
   function handleMapClick() {
     setSelectedReef(null);
     setPanelState('collapsed');
   }
 
-  function handleExplore() {
-    if (!selectedReef) return;
-    const newVals = {
-      ssta_dhw:        selectedReef.avg_dhw,
-      ssta_frequency:  selectedReef.avg_freq,
-      ssta:            selectedReef.avg_ssta,
-      sst:             selectedReef.avg_sst,
-      depth_m:         selectedReef.avg_depth,
-      bleaching_level: 'Colony',
-      exposure:        selectedReef.exposure,
-      ocean:           selectedReef.ocean,
-    };
-    setVals(newVals);
-    setPanelState('exploring');
-    runPredict(newVals);
+  // Slider change → first touch triggers the model
+  function handleValChange(key, value) {
+    setSlidersTouched(true);
+    setVals(v => ({ ...v, [key]: parseFloat(value) }));
   }
 
+  // Preset load → treat as intentional; run model immediately
   function handlePresetLoad(preset) {
     const newVals = { ...preset.values, bleaching_level: 'Colony' };
     setVals(newVals);
     setSelectedReef(null);
+    setSlidersTouched(true);
+    setPanelState('exploring');
     runPredict(newVals);
   }
 
-  function handleValChange(key, value) {
-    setVals(v => ({ ...v, [key]: parseFloat(value) }));
-  }
-
-  // Desktop close (×) → always State 1
-  function closeDesktop() {
+  function closePanel() {
     setSelectedReef(null);
     setPanelState('collapsed');
   }
 
-  // Mobile handle tap → step down one level
-  function collapseMobile() {
-    if (panelState === 'exploring') {
-      setPanelState(selectedReef ? 'reef' : 'collapsed');
-    } else if (panelState === 'reef') {
-      setSelectedReef(null);
-      setPanelState('collapsed');
-    }
-  }
+  // ── Panel content ────────────────────────────────────────────────────────────
 
-  // ── Shared JSX helpers ───────────────────────────────────────────────────────
-  function renderReefSummary() {
-    if (!selectedReef) return null;
+  // Historical card — mirrors SeverityCard layout, uses reef.avg_bleaching directly
+  function renderHistoricalCard(reef) {
+    const pct   = reef.avg_bleaching;
+    const dot   = reefDotColor(pct);
+    const { bg, color } = historicalStyle(pct);
+
     return (
-      <>
-        <div style={{ marginBottom: '14px' }}>
-          <div style={{ color: 'white', fontSize: '1.1rem', fontWeight: 600 }}>
-            {selectedReef.ecoregion}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{ background: bg, borderRadius: 'var(--radius)', padding: '12px 14px' }}>
+          {/* Icon row: colored dot + label / percentage */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+            <div style={{
+              width: '12px', height: '12px', borderRadius: '50%',
+              background: dot, flexShrink: 0,
+              boxShadow: `0 0 6px ${dot}`,
+            }} />
+            <div>
+              <div style={{ fontSize: '0.72rem', color, opacity: 0.65, lineHeight: 1, marginBottom: '3px' }}>
+                Historical average
+              </div>
+              <div style={{ fontSize: '1.8rem', fontWeight: 700, lineHeight: 1, color }}>
+                {pct.toFixed(1)}% bleaching
+              </div>
+            </div>
           </div>
-          <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.8rem', marginTop: '2px' }}>
-            {selectedReef.ocean}
-          </div>
+          <p style={{ margin: 0, fontSize: '0.8rem', fontStyle: 'italic', color, opacity: 0.75, lineHeight: 1.45 }}>
+            This is the average bleaching recorded across all observations in this reef (1980–2020).
+          </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '18px', flexWrap: 'wrap' }}>
-          <StatChip label="Avg bleaching" value={`${selectedReef.avg_bleaching?.toFixed(1)}%`} />
-          <StatChip label="Ocean temp"    value={`${selectedReef.avg_sst?.toFixed(1)}°C`} />
-          <StatChip label="Stress weeks"  value={`${selectedReef.avg_dhw?.toFixed(1)} wks`} />
-        </div>
-
-        <button
-          onClick={handleExplore}
-          style={{
-            background: 'var(--teal)', color: 'white',
-            border: 'none', borderRadius: '10px',
-            padding: '11px 24px', fontSize: '0.875rem', fontWeight: 600,
-            cursor: 'pointer', width: '100%', transition: 'opacity 0.15s',
-          }}
-          onMouseEnter={e => e.currentTarget.style.opacity = '0.82'}
-          onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-        >
-          Explore this reef — what if? →
-        </button>
-      </>
+        {/* Visual hint */}
+        <p style={{ margin: 0, fontSize: '0.72rem', color: 'rgba(255,255,255,0.35)', lineHeight: 1.5 }}>
+          Move the sliders below to run the prediction model →
+        </p>
+      </div>
     );
   }
 
-  function renderExploringContent() {
+  function renderPanelContent() {
+    const showHistorical = !slidersTouched && selectedReef;
     return (
       <>
-        <SeverityCard result={result} loading={loading} />
-        <div style={{ marginTop: '16px' }}>
-          <Sliders vals={vals} onValChange={handleValChange} onPresetLoad={handlePresetLoad} />
+        {showHistorical
+          ? renderHistoricalCard(selectedReef)
+          : <SeverityCard result={result} loading={loading} label="Predicted bleaching" />
+        }
+        <div style={{ marginTop: '14px' }}>
+          <Sliders vals={vals} onValChange={handleValChange} onPresetLoad={handlePresetLoad} historicalContext={result?.historical_context} />
         </div>
       </>
     );
@@ -169,17 +178,45 @@ export default function Explorer() {
   return (
     <div style={{ position: 'fixed', top: '64px', left: 0, right: 0, bottom: 0, overflow: 'hidden' }}>
 
-      {/* Full-screen map — always underneath */}
       <ReefMap
         selectedReef={selectedReef}
         onReefClick={handleReefClick}
         onMapClick={handleMapClick}
       />
 
+      {/* Floating reef info pill */}
+      {selectedReef && (
+        <div style={{
+          position: 'absolute', top: '16px', left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 400,
+          background: 'rgba(255,255,255,0.95)',
+          backdropFilter: 'blur(8px)',
+          borderRadius: '20px',
+          padding: '7px 16px',
+          boxShadow: '0 2px 16px rgba(0,0,0,0.18)',
+          display: 'flex', alignItems: 'center', gap: '8px',
+          fontSize: '0.82rem', color: 'var(--gray-900)',
+          whiteSpace: 'nowrap',
+          pointerEvents: 'none',
+          userSelect: 'none',
+        }}>
+          <div style={{
+            width: '8px', height: '8px', borderRadius: '50%',
+            background: reefDotColor(selectedReef.avg_bleaching),
+            flexShrink: 0,
+          }} />
+          <span style={{ fontWeight: 600 }}>{selectedReef.ecoregion}</span>
+          <span style={{ color: 'var(--gray-200)', fontSize: '0.7rem' }}>|</span>
+          <span>{selectedReef.avg_bleaching?.toFixed(1)}% bleaching</span>
+          <span style={{ color: 'var(--gray-200)', fontSize: '0.7rem' }}>|</span>
+          <span>{selectedReef.avg_sst?.toFixed(1)}°C</span>
+        </div>
+      )}
+
       {isDesktop ? (
-        // ── Desktop: right-side sliding panel ─────────────────────────────────
+        // ── Desktop: right-side sliding panel ───────────────────────────────────
         <>
-          {/* Tab hint — visible only when panel is off-screen */}
           {panelState === 'collapsed' && (
             <div style={{
               position: 'absolute', right: 0, top: '50%',
@@ -198,7 +235,6 @@ export default function Explorer() {
             </div>
           )}
 
-          {/* Side panel */}
           <div style={{
             position: 'absolute', right: 0, top: 0, bottom: 0,
             width: '380px',
@@ -210,21 +246,17 @@ export default function Explorer() {
             display: 'flex', flexDirection: 'column',
             zIndex: 500,
           }}>
-            {/* Header row: label + close button */}
             <div style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               padding: '18px 20px 12px',
               borderBottom: '1px solid rgba(255,255,255,0.08)',
               flexShrink: 0,
             }}>
-              <span style={{
-                color: 'rgba(255,255,255,0.4)',
-                fontSize: '0.7rem', fontWeight: 500, letterSpacing: '0.06em',
-              }}>
-                {panelState === 'exploring' ? 'WHAT IF?' : 'REEF INFO'}
+              <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.7rem', fontWeight: 500, letterSpacing: '0.06em' }}>
+                WHAT IF?
               </span>
               <button
-                onClick={closeDesktop}
+                onClick={closePanel}
                 style={{
                   background: 'rgba(255,255,255,0.07)', border: 'none',
                   borderRadius: '6px', color: 'rgba(255,255,255,0.55)',
@@ -241,15 +273,13 @@ export default function Explorer() {
               </button>
             </div>
 
-            {/* Scrollable content area */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
-              {panelState === 'reef'      && renderReefSummary()}
-              {panelState === 'exploring' && renderExploringContent()}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px 20px' }}>
+              {panelState === 'exploring' && renderPanelContent()}
             </div>
           </div>
         </>
       ) : (
-        // ── Mobile: bottom sheet ───────────────────────────────────────────────
+        // ── Mobile: bottom sheet ─────────────────────────────────────────────────
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0,
           height: MOBILE_HEIGHT[panelState],
@@ -259,12 +289,11 @@ export default function Explorer() {
           transition: 'height 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
           overflow: 'hidden',
           zIndex: 500,
-          boxShadow: PANEL_SHADOW_BOTTOM,
+          boxShadow: PANEL_SHADOW_BTM,
           display: 'flex', flexDirection: 'column',
         }}>
-          {/* Drag handle + collapsed hint */}
           <div
-            onClick={panelState !== 'collapsed' ? collapseMobile : undefined}
+            onClick={panelState !== 'collapsed' ? closePanel : undefined}
             style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center',
               padding: '10px 0 8px',
@@ -272,61 +301,21 @@ export default function Explorer() {
               flexShrink: 0,
             }}
           >
-            <div style={{
-              width: '36px', height: '4px', borderRadius: '2px',
-              background: 'rgba(255,255,255,0.2)',
-            }} />
+            <div style={{ width: '36px', height: '4px', borderRadius: '2px', background: 'rgba(255,255,255,0.2)' }} />
             {panelState === 'collapsed' && (
-              <span style={{
-                color: 'rgba(255,255,255,0.45)', fontSize: '0.78rem',
-                marginTop: '6px', letterSpacing: '0.02em',
-              }}>
+              <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: '0.78rem', marginTop: '6px', letterSpacing: '0.02em' }}>
                 Click a reef to explore ↑
               </span>
             )}
           </div>
 
-          {/* State 2 — reef summary */}
-          {panelState === 'reef' && (
-            <div style={{ padding: '2px 24px 20px', flex: 1 }}>
-              {renderReefSummary()}
-            </div>
-          )}
-
-          {/* State 3 — two-column: result | sliders */}
           {panelState === 'exploring' && (
-            <div style={{
-              flex: 1, overflow: 'hidden',
-              display: 'grid', gridTemplateColumns: '1fr 1fr',
-              gap: '16px', padding: '4px 20px 16px',
-            }}>
-              <div style={{ overflowY: 'auto' }}>
-                <SeverityCard result={result} loading={loading} />
-              </div>
-              <div style={{ overflowY: 'auto' }}>
-                <Sliders vals={vals} onValChange={handleValChange} onPresetLoad={handlePresetLoad} />
-              </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '4px 20px 20px' }}>
+              {renderPanelContent()}
             </div>
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function StatChip({ label, value }) {
-  return (
-    <div style={{
-      background: 'rgba(255,255,255,0.08)',
-      border: '1px solid rgba(255,255,255,0.12)',
-      borderRadius: '8px', padding: '8px 14px',
-    }}>
-      <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: '0.68rem', marginBottom: '3px' }}>
-        {label}
-      </div>
-      <div style={{ color: 'white', fontSize: '0.95rem', fontWeight: 600 }}>
-        {value}
-      </div>
     </div>
   );
 }

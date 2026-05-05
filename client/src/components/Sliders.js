@@ -35,7 +35,7 @@ const SLIDER_CONFIG = [
 ];
 
 // Controlled component — vals and onValChange come from Explorer
-export default function Sliders({ vals, onValChange, onPresetLoad }) {
+export default function Sliders({ vals, onValChange, onPresetLoad, historicalContext }) {
   const [presetsOpen, setPresetsOpen] = useState(false);
   const { data: presets } = useFetch('/api/presets');
 
@@ -146,6 +146,47 @@ export default function Sliders({ vals, onValChange, onPresetLoad }) {
             </div>
           ))}
         </div>
+
+        {/* Thermal stress bar — always rendered, driven by the ssta_dhw slider value */}
+        {(() => {
+          const dhw     = vals.ssta_dhw || 0;
+          const dhwPct  = Math.min(dhw / 20, 1) * 100;
+          const barColor = dhw < 4 ? '#2ecc71' : dhw < 8 ? '#f39c12' : '#e74c3c';
+          return (
+            <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+              <div style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.4)', marginBottom: '4px' }}>
+                Thermal stress (DHW)
+              </div>
+              <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '3px', height: '6px', overflow: 'hidden' }}>
+                <div style={{
+                  width: `${dhwPct}%`, background: barColor,
+                  height: '100%', borderRadius: '3px', transition: 'width 0.3s ease',
+                }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.62rem', color: 'rgba(255,255,255,0.25)', marginTop: '3px' }}>
+                <span>None</span>
+                <span>Bleaching (4 wks)</span>
+                <span>Mortality (8 wks)</span>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Historical context — space always reserved so layout never shifts */}
+      <div style={{ minHeight: '36px' }}>
+        {historicalContext && (
+          <div style={{
+            background: 'rgba(0,150,199,0.1)',
+            borderRadius: '8px', padding: '9px 12px',
+            borderLeft: '2px solid var(--teal)',
+            fontSize: '0.78rem', color: 'rgba(144,224,239,0.85)', lineHeight: 1.5,
+          }}>
+            {historicalContext.n} real observations in the{' '}
+            <strong>{historicalContext.ocean}</strong> with similar stress averaged{' '}
+            <strong>{historicalContext.avg_pct}%</strong> bleaching historically.
+          </div>
+        )}
       </div>
     </div>
   );

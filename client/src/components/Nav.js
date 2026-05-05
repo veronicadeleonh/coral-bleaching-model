@@ -2,7 +2,7 @@ export default function Nav({ page, setPage }) {
   return (
     <nav style={{
       position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
-      background: 'rgba(8, 18, 32, 0.95)',
+      background: 'linear-gradient(135deg, #0a1628 0%, #0d2137 100%)',
       backdropFilter: 'blur(12px)',
       borderBottom: '1px solid rgba(255,255,255,0.08)',
       height: '64px',

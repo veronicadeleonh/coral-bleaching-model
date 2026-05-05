@@ -20,7 +20,8 @@ export default function Science() {
     .map(r => ({ name: r.ecoregion.length > 28 ? r.ecoregion.slice(0, 26) + '…' : r.ecoregion, value: +r.avg_bleaching.toFixed(1) }));
 
   return (
-    <div style={{ padding: '1.5rem 2rem', maxWidth: '1200px', margin: '0 auto' }}>
+    <div style={{ background: 'linear-gradient(180deg, #0a1628 0%, #0d2137 40%, #0a3352 100%)', minHeight: '100vh', paddingBottom: '3rem' }}>
+      <div style={{ padding: '1.5rem 2rem', maxWidth: '1200px', margin: '0 auto' }}>
 
       <div style={{ marginBottom: '1.5rem' }}>
         <h1 style={{ color: 'white', fontSize: '1.4rem', fontWeight: 400, letterSpacing: '-0.03em', marginBottom: '6px' }}>
@@ -189,6 +190,7 @@ export default function Science() {
 
       <div style={{ marginTop: '1.5rem', textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontSize: '0.75rem' }}>
         Data: Global Coral Reef Monitoring Network · 23,203 observations · 1980–2020
+      </div>
       </div>
     </div>
   );

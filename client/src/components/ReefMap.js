@@ -59,8 +59,8 @@ export default function ReefMap({ selectedReef, onReefClick, onMapClick }) {
               key={reef.ecoregion}
               center={[reef.lat, reef.lon]}
               radius={isSelected
-                ? Math.max(5, Math.min(reef.n / 80, 12)) * 1.6
-                : Math.max(5, Math.min(reef.n / 80, 12))}
+                ? (5 + (reef.avg_bleaching / 100) * 15) * 1.6
+                : 5 + (reef.avg_bleaching / 100) * 15}
               pathOptions={{
                 fillColor:   isSelected ? '#0077b6' : bleachingColor(reef.avg_bleaching),
                 fillOpacity: 0.9,
@@ -97,14 +97,17 @@ export default function ReefMap({ selectedReef, onReefClick, onMapClick }) {
         fontSize: '0.72rem', color: 'var(--gray-600)',
         boxShadow: 'var(--shadow)',
       }}>
-        <div style={{ marginBottom: '6px', fontWeight: 500 }}>Avg bleaching</div>
+        <div style={{ marginBottom: '6px', fontWeight: 500 }}>Bleaching intensity</div>
+        <div style={{ fontSize: '0.67rem', color: 'var(--gray-600)', marginBottom: '6px' }}>
+          Circle size + color
+        </div>
         {[
-          { color: '#2ecc71', label: '< 15%'  },
-          { color: '#f39c12', label: '15–40%' },
-          { color: '#e74c3c', label: '> 40%'  },
-        ].map(({ color, label }) => (
-          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: color, border: '1.5px solid white', flexShrink: 0 }} />
+          { color: '#2ecc71', label: '< 15%',  size: 7  },
+          { color: '#f39c12', label: '15–40%', size: 10 },
+          { color: '#e74c3c', label: '> 40%',  size: 13 },
+        ].map(({ color, label, size }) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+            <div style={{ width: `${size}px`, height: `${size}px`, borderRadius: '50%', background: color, border: '1.5px solid white', flexShrink: 0 }} />
             <span>{label}</span>
           </div>
         ))}
