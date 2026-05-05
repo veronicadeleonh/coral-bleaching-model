@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { useFetch } from '../hooks/useFetch';
+import { useState, useEffect, useRef } from 'react';
 
 const SLIDER_CONFIG = [
   {
@@ -34,74 +33,49 @@ const SLIDER_CONFIG = [
   },
 ];
 
+function getImpactBadge(importance) {
+  if (importance > 0.66) return { label: 'most impact', style: 'high' };
+  if (importance > 0.33) return { label: 'high',        style: 'high' };
+  if (importance > 0.1)  return { label: 'medium',      style: 'med'  };
+  return                         { label: 'low',         style: 'low'  };
+}
+
+const BADGE_STYLES = {
+  high: { background: 'rgba(255,255,255,0.15)', color: 'rgba(255,255,255,0.9)',  fontSize: '8px', fontWeight: 500 },
+  med:  { background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.45)', fontSize: '8px' },
+  low:  { background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.2)',  fontSize: '8px' },
+};
+
+const PILL_BASE = { padding: '2px 7px', borderRadius: '8px', whiteSpace: 'nowrap' };
+
 // Controlled component — vals and onValChange come from Explorer
-export default function Sliders({ vals, onValChange, onPresetLoad, historicalContext }) {
-  const [presetsOpen, setPresetsOpen] = useState(false);
-  const { data: presets } = useFetch('/api/presets');
+export default function Sliders({ vals, onValChange, historicalContext }) {
+  const [shapImportance, setShapImportance] = useState(null);
+  const lastShapVals = useRef(null);
+
+  useEffect(() => {
+    const shouldFetch = !lastShapVals.current ||
+      SLIDER_CONFIG.some(({ key, min, max }) => {
+        const prev = lastShapVals.current[key] ?? min;
+        const curr = vals[key] ?? min;
+        return Math.abs(curr - prev) > 0.15 * (max - min);
+      });
+
+    if (!shouldFetch) return;
+
+    lastShapVals.current = { ...vals };
+    fetch('/api/shap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(vals),
+    })
+      .then(r => r.json())
+      .then(data => { if (data.importance) setShapImportance(data.importance); })
+      .catch(() => {});
+  }, [vals]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-
-      {/* Historical presets — collapsed by default */}
-      <div style={{
-        background: 'rgba(255,255,255,0.05)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        borderRadius: '10px', overflow: 'hidden',
-      }}>
-        <button
-          onClick={() => setPresetsOpen(o => !o)}
-          style={{
-            width: '100%', background: 'none', border: 'none',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '10px 14px', cursor: 'pointer',
-            color: 'rgba(255,255,255,0.6)', fontSize: '0.72rem', fontWeight: 500,
-            letterSpacing: '0.05em',
-          }}
-        >
-          <span>HISTORICAL EVENTS</span>
-          <span style={{
-            display: 'inline-block',
-            transform: presetsOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 0.2s',
-          }}>▾</span>
-        </button>
-
-        {presetsOpen && (
-          <div style={{ padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {presets?.map(preset => (
-              <button
-                key={preset.name}
-                onClick={() => onPresetLoad(preset)}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  borderRadius: '8px', padding: '9px 12px',
-                  cursor: 'pointer', textAlign: 'left', width: '100%',
-                  transition: 'background 0.15s',
-                }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
-              >
-                <div>
-                  <div style={{ fontSize: '0.8rem', fontWeight: 500, color: 'rgba(255,255,255,0.85)', marginBottom: '2px' }}>
-                    {preset.name}
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', lineHeight: 1.3 }}>
-                    {preset.description}
-                  </div>
-                </div>
-                <div style={{
-                  fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap', marginLeft: '10px',
-                  color: preset.severity?.key === 'healthy' ? '#6ee7b7' : '#fca5a5',
-                }}>
-                  {preset.prediction?.severity?.toFixed(0)}%
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
 
       {/* What-if sliders */}
       <div style={{
@@ -119,17 +93,23 @@ export default function Sliders({ vals, onValChange, onPresetLoad, historicalCon
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {SLIDER_CONFIG.map(({ key, min, max, step, label, sublabel, tooltip }) => (
             <div key={key}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '5px' }}>
-                <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontSize: '0.82rem', fontWeight: 500, color: 'rgba(255,255,255,0.85)' }}>{label}</span>
                   <span style={{ fontSize: '0.67rem', color: 'rgba(255,255,255,0.35)', marginLeft: '6px' }}>{sublabel}</span>
                 </div>
-                <span style={{
-                  fontSize: '0.88rem', fontWeight: 600,
-                  color: 'var(--sky)', minWidth: '40px', textAlign: 'right',
-                }}>
-                  {vals[key]?.toFixed(1)}
-                </span>
+                <div style={{ minWidth: '120px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--sky)' }}>
+                    {vals[key]?.toFixed(1)}
+                  </span>
+                  {shapImportance
+                    ? (() => {
+                        const { label: bl, style: bs } = getImpactBadge(shapImportance[key] ?? 0);
+                        return <span style={{ ...PILL_BASE, ...BADGE_STYLES[bs] }}>{bl}</span>;
+                      })()
+                    : <span style={{ ...PILL_BASE, ...BADGE_STYLES.low }}>—</span>
+                  }
+                </div>
               </div>
               <input
                 type="range"
@@ -149,8 +129,8 @@ export default function Sliders({ vals, onValChange, onPresetLoad, historicalCon
 
         {/* Thermal stress bar — always rendered, driven by the ssta_dhw slider value */}
         {(() => {
-          const dhw     = vals.ssta_dhw || 0;
-          const dhwPct  = Math.min(dhw / 20, 1) * 100;
+          const dhw      = vals.ssta_dhw || 0;
+          const dhwPct   = Math.min(dhw / 20, 1) * 100;
           const barColor = dhw < 4 ? '#2ecc71' : dhw < 8 ? '#f39c12' : '#e74c3c';
           return (
             <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>

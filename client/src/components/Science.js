@@ -5,6 +5,54 @@ import {
   ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
 
+const EVENTS = [
+  {
+    year: '1998',
+    title: 'First global mass bleaching',
+    ocean: 'Global',
+    dhw: 12,
+    bleaching: 46,
+    color: '#e74c3c',
+    desc: 'The strongest El Niño on record drove ocean temperatures to extremes worldwide. 16% of the world\'s coral reefs were killed in a single year — the first truly global bleaching event ever recorded.',
+  },
+  {
+    year: '2002',
+    title: 'Great Barrier Reef crisis',
+    ocean: 'Pacific',
+    dhw: 8,
+    bleaching: 60,
+    color: '#e74c3c',
+    desc: 'The Great Barrier Reef experienced its worst bleaching event to that point, with 60% of inshore reefs affected. It was a warning that the GBR\'s resilience was beginning to fail.',
+  },
+  {
+    year: '2010',
+    title: 'Caribbean & Southeast Asia hit hard',
+    ocean: 'Atlantic / Indo-Pacific',
+    dhw: 9,
+    bleaching: 38,
+    color: '#f39c12',
+    desc: 'A La Niña-boosted warming event caused severe bleaching across the Caribbean and Southeast Asia. Some reefs in Indonesia recorded 80% coral death.',
+  },
+  {
+    year: '2016',
+    title: 'Worst bleaching in history',
+    ocean: 'Global',
+    dhw: 16,
+    bleaching: 67,
+    color: '#e74c3c',
+    desc: 'An unprecedented marine heatwave — supercharged by El Niño and long-term warming — killed 50% of shallow-water corals on the Great Barrier Reef\'s northern section. Two-thirds of global reefs were affected.',
+  },
+  {
+    year: '2024',
+    title: 'Fourth global bleaching event',
+    ocean: 'Global',
+    dhw: 14,
+    bleaching: 54,
+    color: '#e74c3c',
+    desc: 'NOAA confirmed the fourth global bleaching event in recorded history, affecting reefs in every ocean basin. Record sea surface temperatures — the hottest since satellite records began — drove the crisis.',
+  },
+];
+
 const CARD = {
   background: 'white', borderRadius: 'var(--radius)',
   padding: '1.5rem', boxShadow: 'var(--shadow)',
@@ -34,6 +82,36 @@ export default function Science() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+        {/* Key moments */}
+        <div>
+          <h2 style={{ color: 'white', fontSize: '1rem', fontWeight: 500, marginBottom: '12px' }}>
+            Key moments in coral bleaching history
+          </h2>
+          <div style={{ display: 'flex', gap: '14px', overflowX: 'auto', paddingBottom: '8px' }}>
+            {EVENTS.map(({ year, title, ocean, dhw, bleaching, color, desc }) => (
+              <div key={year} style={{
+                flex: '0 0 240px',
+                background: 'rgba(255,255,255,0.05)',
+                border: `1px solid ${color}44`,
+                borderTop: `3px solid ${color}`,
+                borderRadius: '10px',
+                padding: '14px 16px',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '1.3rem', fontWeight: 700, color, lineHeight: 1 }}>{year}</span>
+                  <span style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.04em' }}>{ocean}</span>
+                </div>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'white', marginBottom: '8px', lineHeight: 1.3 }}>{title}</div>
+                <p style={{ margin: '0 0 10px', fontSize: '0.75rem', color: 'rgba(255,255,255,0.55)', lineHeight: 1.55 }}>{desc}</p>
+                <div style={{ display: 'flex', gap: '10px', fontSize: '0.7rem' }}>
+                  <span style={{ color: 'rgba(255,255,255,0.35)' }}>DHW: <strong style={{ color: 'rgba(255,255,255,0.65)' }}>{dhw} wks</strong></span>
+                  <span style={{ color: 'rgba(255,255,255,0.35)' }}>Bleaching: <strong style={{ color }}>{bleaching}%</strong></span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* Temporal trend */}
         <div style={CARD}>

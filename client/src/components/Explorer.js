@@ -104,16 +104,6 @@ export default function Explorer() {
     setVals(v => ({ ...v, [key]: parseFloat(value) }));
   }
 
-  // Preset load → treat as intentional; run model immediately
-  function handlePresetLoad(preset) {
-    const newVals = { ...preset.values, bleaching_level: 'Colony' };
-    setVals(newVals);
-    setSelectedReef(null);
-    setSlidersTouched(true);
-    setPanelState('exploring');
-    runPredict(newVals);
-  }
-
   function closePanel() {
     setSelectedReef(null);
     setPanelState('collapsed');
@@ -168,7 +158,7 @@ export default function Explorer() {
           : <SeverityCard result={result} loading={loading} label="Predicted bleaching" />
         }
         <div style={{ marginTop: '14px' }}>
-          <Sliders vals={vals} onValChange={handleValChange} onPresetLoad={handlePresetLoad} historicalContext={result?.historical_context} />
+          <Sliders vals={vals} onValChange={handleValChange} historicalContext={result?.historical_context} />
         </div>
       </>
     );

@@ -18,9 +18,11 @@ print("Loading data...")
 df = pd.read_csv(DATA_PATH, parse_dates=["date"])
 
 print("Loading models...")
-clf_pipeline = joblib.load(os.path.join(MODELS_PATH, "clf_pipeline.joblib"))
-reg_pipeline = joblib.load(os.path.join(MODELS_PATH, "reg_pipeline.joblib"))
-PRESETS      = joblib.load(os.path.join(MODELS_PATH, "presets.joblib"))
+clf_pipeline   = joblib.load(os.path.join(MODELS_PATH, "clf_pipeline.joblib"))
+reg_pipeline   = joblib.load(os.path.join(MODELS_PATH, "reg_pipeline.joblib"))
+PRESETS        = joblib.load(os.path.join(MODELS_PATH, "presets.joblib"))
+explainer_clf  = joblib.load(os.path.join(MODELS_PATH, "explainer_clf.joblib"))
+FEAT_NAMES     = joblib.load(os.path.join(MODELS_PATH, "feature_names.joblib"))
 
 FEATURES = ["ssta_dhw","ssta_frequency","ssta","sst","depth_m",
             "bleaching_level","exposure","ocean"]
@@ -104,6 +106,8 @@ def get_timeseries():
 
 
 @app.route("/api/presets")
+# Note: no longer consumed by the frontend Explorer panel — presets are now
+# displayed as static "Key moments" cards on the Science page.
 def get_presets():
     """Historical scenario presets with descriptions."""
     descriptions = {
@@ -188,6 +192,22 @@ def api_predict():
             ),
         })
 
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/shap", methods=["POST"])
+def api_shap():
+    body = request.get_json(force=True)
+    try:
+        X    = pd.DataFrame([{f: body[f] for f in FEATURES}])[FEATURES]
+        pre  = clf_pipeline.named_steps["pre"]
+        X_t  = pre.transform(X)
+        shap_vals = explainer_clf.shap_values(X_t)[0]
+        abs_vals  = np.abs(shap_vals)
+        max_val   = abs_vals.max() if abs_vals.max() > 0 else 1
+        normalized = (abs_vals / max_val).tolist()
+        return jsonify({"importance": dict(zip(FEAT_NAMES, normalized))})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
