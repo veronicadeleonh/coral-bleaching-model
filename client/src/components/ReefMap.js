@@ -1,53 +1,79 @@
-import { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Tooltip } from 'react-leaflet';
+import { useRef } from 'react';
+import { MapContainer, TileLayer, CircleMarker, Tooltip, useMapEvents } from 'react-leaflet';
 import { useFetch } from '../hooks/useFetch';
 import 'leaflet/dist/leaflet.css';
 
 function bleachingColor(pct) {
-  const t = Math.min(pct / 80, 1);
-  const r = Math.round(59  + t * (220 - 59));
-  const g = Math.round(130 + t * (53  - 130));
-  const b = Math.round(246 + t * (69  - 246));
-  return `rgb(${r},${g},${b})`;
+  if (pct < 15)  return '#2ecc71'; // green  — low bleaching
+  if (pct < 40)  return '#f39c12'; // amber  — moderate
+  return '#e74c3c';                // red    — severe
 }
 
-export default function ReefMap({ selectedReef }) {
+// Listens for clicks on the map background (not on markers)
+function MapClickHandler({ onMapClick, markerClicked }) {
+  useMapEvents({
+    click: () => {
+      if (!markerClicked.current) onMapClick?.();
+    },
+  });
+  return null;
+}
+
+export default function ReefMap({ selectedReef, onReefClick, onMapClick }) {
   const { data: reefs, loading } = useFetch('/api/reefs');
+  // Flag to prevent background-click handler firing when a marker was just clicked
+  const markerClicked = useRef(false);
 
   if (loading) return (
     <div style={{
-      height: '100%', display: 'flex', alignItems: 'center',
-      justifyContent: 'center', background: '#e8f4f8',
-      borderRadius: 'var(--radius)', color: 'var(--gray-600)',
+      position: 'absolute', inset: 0,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      background: '#e8f4f8', color: 'var(--gray-600)',
     }}>
       Loading map...
     </div>
   );
 
   return (
-    <div style={{ position: 'relative', height: '100%' }}>
+    <div style={{ position: 'absolute', inset: 0 }}>
       <MapContainer
         center={[10, 10]}
         zoom={2}
-        style={{ height: '100%', width: '100%', borderRadius: 'var(--radius)' }}
-        scrollWheelZoom={false}
+        minZoom={2}
+        maxBounds={[[-90, -180], [90, 180]]}
+        maxBoundsViscosity={1.0}
+        style={{ height: '100%', width: '100%', borderRadius: 0 }}
+        scrollWheelZoom={true}
       >
+        <MapClickHandler onMapClick={onMapClick} markerClicked={markerClicked} />
+
         <TileLayer
           attribution='&copy; <a href="https://carto.com">CARTO</a>'
-          url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         />
+
         {reefs?.map(reef => {
           const isSelected = selectedReef?.ecoregion === reef.ecoregion;
           return (
             <CircleMarker
               key={reef.ecoregion}
               center={[reef.lat, reef.lon]}
-              radius={isSelected ? 10 : Math.max(5, Math.min(reef.n / 80, 12))}
+              radius={isSelected
+                ? Math.max(5, Math.min(reef.n / 80, 12)) * 1.6
+                : Math.max(5, Math.min(reef.n / 80, 12))}
               pathOptions={{
                 fillColor:   isSelected ? '#0077b6' : bleachingColor(reef.avg_bleaching),
-                fillOpacity: 0.8,
-                color:       isSelected ? '#023e8a' : 'white',
-                weight:      isSelected ? 2 : 0.5,
+                fillOpacity: 0.9,
+                color:       'white',
+                weight:      isSelected ? 3 : 1.5,
+              }}
+              eventHandlers={{
+                click: () => {
+                  // Set flag so MapClickHandler ignores this event
+                  markerClicked.current = true;
+                  setTimeout(() => { markerClicked.current = false; }, 50);
+                  onReefClick?.(reef);
+                },
               }}
             >
               <Tooltip>
@@ -63,23 +89,25 @@ export default function ReefMap({ selectedReef }) {
         })}
       </MapContainer>
 
-      {/* Legend */}
+      {/* Legend — bottom-left, clear of zoom controls (top-left) */}
       <div style={{
-        position: 'absolute', bottom: '16px', left: '16px', zIndex: 1000,
+        position: 'absolute', bottom: '24px', left: '16px', zIndex: 1000,
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(8px)',
         borderRadius: '8px', padding: '10px 14px',
         fontSize: '0.72rem', color: 'var(--gray-600)',
         boxShadow: 'var(--shadow)',
       }}>
-        <div style={{ marginBottom: '5px', fontWeight: 500 }}>Avg bleaching</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span>Low</span>
-          <div style={{
-            width: '80px', height: '8px', borderRadius: '4px',
-            background: 'linear-gradient(to right, rgb(59,130,246), rgb(220,53,69))'
-          }} />
-          <span>High</span>
-        </div>
+        <div style={{ marginBottom: '6px', fontWeight: 500 }}>Avg bleaching</div>
+        {[
+          { color: '#2ecc71', label: '< 15%'  },
+          { color: '#f39c12', label: '15–40%' },
+          { color: '#e74c3c', label: '> 40%'  },
+        ].map(({ color, label }) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
+            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: color, border: '1.5px solid white', flexShrink: 0 }} />
+            <span>{label}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

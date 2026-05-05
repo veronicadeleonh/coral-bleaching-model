@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useFetch } from '../hooks/useFetch';
-import SeverityCard from './SeverityCard';
 
 const SLIDER_CONFIG = [
   {
@@ -35,185 +34,112 @@ const SLIDER_CONFIG = [
   },
 ];
 
-const DEFAULT_VALS = {
-  ssta_dhw: 2.0, ssta_frequency: 3.0, ssta: 0.3,
-  sst: 28.0, depth_m: 8.0,
-  bleaching_level: 'Colony', exposure: 'Exposed', ocean: 'Atlantic',
-};
-
-export default function Sliders({ onReefSelect }) {
-  const [vals,      setVals]      = useState(DEFAULT_VALS);
-  const [result,    setResult]    = useState(null);
-  const [loading,   setLoading]   = useState(false);
-  const [reefLabel, setReefLabel] = useState(null);
-
+// Controlled component — vals and onValChange come from Explorer
+export default function Sliders({ vals, onValChange, onPresetLoad }) {
+  const [presetsOpen, setPresetsOpen] = useState(false);
   const { data: presets } = useFetch('/api/presets');
-  const { data: reefs   } = useFetch('/api/reefs');
-
-  // Debounced predict call
-  const runPredict = useCallback(async (v) => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/predict', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(v),
-      });
-      const data = await res.json();
-      setResult({ ...data, dhw_value: v.ssta_dhw });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => runPredict(vals), 300);
-    return () => clearTimeout(t);
-  }, [vals, runPredict]);
-
-  function loadPreset(preset) {
-    setVals({ ...preset.values, bleaching_level: 'Colony' });
-    setReefLabel(preset.name);
-    onReefSelect?.(null);
-  }
-
-  function loadReef(ecoregion) {
-    const reef = reefs?.find(r => r.ecoregion === ecoregion);
-    if (!reef) return;
-    setVals({
-      ssta_dhw:        reef.avg_dhw,
-      ssta_frequency:  reef.avg_freq,
-      ssta:            reef.avg_ssta,
-      sst:             reef.avg_sst,
-      depth_m:         reef.avg_depth,
-      bleaching_level: 'Colony',
-      exposure:        reef.exposure,
-      ocean:           reef.ocean,
-    });
-    setReefLabel(reef.ecoregion);
-    onReefSelect?.(reef);
-  }
-
-  function handleSlider(key, value) {
-    setVals(v => ({ ...v, [key]: parseFloat(value) }));
-    setReefLabel(null);
-  }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
-      {/* Reef search */}
+      {/* Historical presets — collapsed by default */}
       <div style={{
-        background: 'white', borderRadius: 'var(--radius)',
-        padding: '16px', boxShadow: 'var(--shadow)',
+        background: 'rgba(255,255,255,0.05)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '10px', overflow: 'hidden',
       }}>
-        <label style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--gray-600)', display: 'block', marginBottom: '8px' }}>
-          SEARCH A REEF
-        </label>
-        <select
-          onChange={e => loadReef(e.target.value)}
-          defaultValue=""
+        <button
+          onClick={() => setPresetsOpen(o => !o)}
           style={{
-            width: '100%', padding: '10px 12px',
-            border: '1px solid var(--gray-200)', borderRadius: '8px',
-            fontSize: '0.875rem', background: 'white',
-            color: 'var(--gray-900)', cursor: 'pointer',
+            width: '100%', background: 'none', border: 'none',
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '10px 14px', cursor: 'pointer',
+            color: 'rgba(255,255,255,0.6)', fontSize: '0.72rem', fontWeight: 500,
+            letterSpacing: '0.05em',
           }}
         >
-          <option value="" disabled>— choose a reef to load its conditions —</option>
-          {reefs?.sort((a,b) => a.ecoregion.localeCompare(b.ecoregion))
-               .map(r => (
-            <option key={r.ecoregion} value={r.ecoregion}>{r.ecoregion}</option>
-          ))}
-        </select>
-        {reefLabel && (
-          <div style={{
-            marginTop: '8px', fontSize: '0.8rem',
-            color: 'var(--teal)', fontWeight: 500
-          }}>
-            ✓ Exploring: {reefLabel}
+          <span>HISTORICAL EVENTS</span>
+          <span style={{
+            display: 'inline-block',
+            transform: presetsOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+            transition: 'transform 0.2s',
+          }}>▾</span>
+        </button>
+
+        {presetsOpen && (
+          <div style={{ padding: '0 10px 10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {presets?.map(preset => (
+              <button
+                key={preset.name}
+                onClick={() => onPresetLoad(preset)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  borderRadius: '8px', padding: '9px 12px',
+                  cursor: 'pointer', textAlign: 'left', width: '100%',
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
+              >
+                <div>
+                  <div style={{ fontSize: '0.8rem', fontWeight: 500, color: 'rgba(255,255,255,0.85)', marginBottom: '2px' }}>
+                    {preset.name}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', lineHeight: 1.3 }}>
+                    {preset.description}
+                  </div>
+                </div>
+                <div style={{
+                  fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap', marginLeft: '10px',
+                  color: preset.severity?.key === 'healthy' ? '#6ee7b7' : '#fca5a5',
+                }}>
+                  {preset.prediction?.severity?.toFixed(0)}%
+                </div>
+              </button>
+            ))}
           </div>
         )}
       </div>
 
-      {/* Historical presets */}
+      {/* What-if sliders */}
       <div style={{
-        background: 'white', borderRadius: 'var(--radius)',
-        padding: '16px', boxShadow: 'var(--shadow)',
+        background: 'rgba(255,255,255,0.05)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderRadius: '10px', padding: '12px 14px',
       }}>
-        <label style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--gray-600)', display: 'block', marginBottom: '10px' }}>
-          OR LOAD A HISTORICAL EVENT
-        </label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {presets?.map(preset => (
-            <button
-              key={preset.name}
-              onClick={() => loadPreset(preset)}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                background: 'var(--gray-100)', border: '1px solid var(--gray-200)',
-                borderRadius: '8px', padding: '10px 14px',
-                cursor: 'pointer', textAlign: 'left', width: '100%',
-                transition: 'background 0.15s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = '#e8f4f8'}
-              onMouseLeave={e => e.currentTarget.style.background = 'var(--gray-100)'}
-            >
-              <div>
-                <div style={{ fontSize: '0.82rem', fontWeight: 500, color: 'var(--gray-900)', marginBottom: '2px' }}>
-                  {preset.name}
-                </div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--gray-600)', lineHeight: 1.3 }}>
-                  {preset.description}
-                </div>
-              </div>
-              <div style={{
-                fontSize: '0.75rem', fontWeight: 600,
-                color: preset.severity?.key === 'healthy' ? '#155724' : '#721c24',
-                background: preset.severity?.key === 'healthy' ? '#d4edda' : '#f8d7da',
-                padding: '3px 8px', borderRadius: '10px', whiteSpace: 'nowrap', marginLeft: '10px'
-              }}>
-                {preset.prediction?.severity?.toFixed(0)}% bleaching
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Sliders */}
-      <div style={{
-        background: 'white', borderRadius: 'var(--radius)',
-        padding: '16px', boxShadow: 'var(--shadow)',
-      }}>
-        <label style={{ fontSize: '0.75rem', fontWeight: 500, color: 'var(--gray-600)', display: 'block', marginBottom: '12px' }}>
+        <div style={{
+          fontSize: '0.7rem', fontWeight: 500, letterSpacing: '0.05em',
+          color: 'rgba(255,255,255,0.4)', marginBottom: '14px',
+        }}>
           ADJUST CONDITIONS — WHAT IF?
-        </label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {SLIDER_CONFIG.map(({ key, min, max, step, label, sublabel, tooltip }) => (
             <div key={key}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '5px' }}>
                 <div>
-                  <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--gray-900)' }}>{label}</span>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--gray-600)', marginLeft: '6px' }}>{sublabel}</span>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 500, color: 'rgba(255,255,255,0.85)' }}>{label}</span>
+                  <span style={{ fontSize: '0.67rem', color: 'rgba(255,255,255,0.35)', marginLeft: '6px' }}>{sublabel}</span>
                 </div>
                 <span style={{
-                  fontSize: '0.9rem', fontWeight: 600,
-                  color: 'var(--ocean)', minWidth: '48px', textAlign: 'right'
+                  fontSize: '0.88rem', fontWeight: 600,
+                  color: 'var(--sky)', minWidth: '40px', textAlign: 'right',
                 }}>
-                  {vals[key]?.toFixed(key === 'ssta' ? 1 : 1)}
+                  {vals[key]?.toFixed(1)}
                 </span>
               </div>
               <input
                 type="range"
                 min={min} max={max} step={step}
                 value={vals[key] ?? min}
-                onChange={e => handleSlider(key, e.target.value)}
+                onChange={e => onValChange(key, e.target.value)}
                 title={tooltip}
-                style={{ width: '100%', accentColor: 'var(--ocean)', cursor: 'pointer' }}
+                style={{ width: '100%', accentColor: 'var(--teal)', cursor: 'pointer' }}
               />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: '#adb5bd' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.64rem', color: 'rgba(255,255,255,0.2)' }}>
                 <span>{min}</span>
                 <span>{max}</span>
               </div>
@@ -221,9 +147,6 @@ export default function Sliders({ onReefSelect }) {
           ))}
         </div>
       </div>
-
-      {/* Prediction */}
-      <SeverityCard result={result} loading={loading} />
     </div>
   );
 }
