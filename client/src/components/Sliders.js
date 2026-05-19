@@ -36,7 +36,7 @@ function ImpactDots({ importance }) {
       {[0, 1, 2, 3, 4].map(i => (
         <div key={i} style={{
           width: '4px', height: '12px', borderRadius: '2px',
-          background: i < filled ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.12)',
+          background: i < filled ? 'var(--primary)' : 'var(--hairline)',
         }} />
       ))}
     </div>
@@ -72,17 +72,18 @@ export default function Sliders({ vals, onValChange, historicalContext }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
-      {/* What-if sliders */}
+      {/* Sliders card */}
       <div style={{
-        background: 'rgba(255,255,255,0.05)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        borderRadius: '10px', padding: '12px 14px',
+        background: 'var(--surface)',
+        border: '1px solid var(--hairline)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '14px 16px',
       }}>
         <div style={{
-          fontSize: '0.7rem', fontWeight: 500, letterSpacing: '0.05em',
-          color: 'rgba(255,255,255,0.4)', marginBottom: '14px',
+          fontSize: '0.6875rem', fontWeight: 600, letterSpacing: '0.07em',
+          color: 'var(--stone)', textTransform: 'uppercase', marginBottom: '16px',
         }}>
-          ADJUST CONDITIONS — WHAT IF?
+          Adjust conditions — What if?
         </div>
 
         <div>
@@ -90,27 +91,27 @@ export default function Sliders({ vals, onValChange, historicalContext }) {
             <div key={key} style={{ marginBottom: '16px' }} title={description}>
               {/* Line 1: emoji · name · impact dots · value+unit */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
-                <span>{emoji}</span>
-                <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'rgba(255,255,255,0.85)', flex: 1 }}>
+                <span style={{ fontSize: '0.9rem' }}>{emoji}</span>
+                <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--charcoal)', flex: 1 }}>
                   {name}
                 </span>
                 <ImpactDots importance={shapImportance ? (shapImportance[key] ?? 0) : null} />
-                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#90e0ef', minWidth: '48px', textAlign: 'right' }}>
+                <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--primary)', minWidth: '48px', textAlign: 'right' }}>
                   {vals[key]?.toFixed(1)}{unit}
                 </span>
               </div>
 
-              {/* Line 2: track */}
+              {/* Track */}
               <input
                 type="range"
                 min={min} max={max} step={step}
                 value={vals[key] ?? min}
                 onChange={e => onValChange(key, e.target.value)}
-                style={{ width: '100%', accentColor: 'var(--teal)', cursor: 'pointer' }}
+                style={{ width: '100%', accentColor: 'var(--primary)', cursor: 'pointer' }}
               />
 
-              {/* Min / max labels */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.68rem', color: 'rgba(255,255,255,0.25)', marginTop: '3px' }}>
+              {/* Min / max */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6875rem', color: 'var(--muted)', marginTop: '2px' }}>
                 <span>{min}{unit}</span>
                 <span>{max}{unit}</span>
               </div>
@@ -118,23 +119,23 @@ export default function Sliders({ vals, onValChange, historicalContext }) {
           ))}
         </div>
 
-        {/* Thermal stress bar — always rendered, driven by the ssta_dhw slider value */}
+        {/* Thermal stress bar */}
         {(() => {
           const dhw      = vals.ssta_dhw || 0;
           const dhwPct   = Math.min(dhw / 20, 1) * 100;
-          const barColor = dhw < 4 ? '#2ecc71' : dhw < 8 ? '#f39c12' : '#e74c3c';
+          const barColor = dhw < 4 ? 'var(--success)' : dhw < 8 ? 'var(--brand-orange)' : 'var(--error)';
           return (
-            <div style={{ marginTop: '18px', paddingTop: '14px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
-              <div style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.4)', marginBottom: '4px' }}>
+            <div style={{ marginTop: '16px', paddingTop: '14px', borderTop: '1px solid var(--hairline)' }}>
+              <div style={{ fontSize: '0.6875rem', color: 'var(--stone)', fontWeight: 500, marginBottom: '5px' }}>
                 Thermal stress (DHW)
               </div>
-              <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '3px', height: '6px', overflow: 'hidden' }}>
+              <div style={{ background: 'var(--hairline)', borderRadius: 'var(--radius-xs)', height: '6px', overflow: 'hidden' }}>
                 <div style={{
                   width: `${dhwPct}%`, background: barColor,
-                  height: '100%', borderRadius: '3px', transition: 'width 0.3s ease',
+                  height: '100%', borderRadius: 'var(--radius-xs)', transition: 'width 0.3s ease',
                 }} />
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.62rem', color: 'rgba(255,255,255,0.25)', marginTop: '3px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.6875rem', color: 'var(--muted)', marginTop: '3px' }}>
                 <span>None</span>
                 <span>Bleaching (4 wks)</span>
                 <span>Mortality (8 wks)</span>
@@ -144,14 +145,15 @@ export default function Sliders({ vals, onValChange, historicalContext }) {
         })()}
       </div>
 
-      {/* Historical context — space always reserved so layout never shifts */}
+      {/* Historical context */}
       <div style={{ minHeight: '36px' }}>
         {historicalContext && (
           <div style={{
-            background: 'rgba(0,150,199,0.1)',
-            borderRadius: '8px', padding: '9px 12px',
-            borderLeft: '2px solid var(--teal)',
-            fontSize: '0.78rem', color: 'rgba(144,224,239,0.85)', lineHeight: 1.5,
+            background: 'var(--tint-sky)',
+            borderRadius: 'var(--radius-md)',
+            padding: '10px 14px',
+            borderLeft: '3px solid var(--brand-teal)',
+            fontSize: '0.8rem', color: 'var(--charcoal)', lineHeight: 1.55,
           }}>
             {historicalContext.n} real observations in the{' '}
             <strong>{historicalContext.ocean}</strong> with similar stress averaged{' '}

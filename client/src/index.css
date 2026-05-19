@@ -1,35 +1,121 @@
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Inter:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --ocean:    #0077b6;
-  --teal:     #0096c7;
-  --sky:      #90e0ef;
-  --sand:     #f4f1de;
-  --coral:    #e07a5f;
-  --amber:    #f2cc8f;
-  --dark:     #1a1a2e;
-  --gray-900: #212529;
-  --gray-600: #6c757d;
-  --gray-200: #e9ecef;
-  --gray-100: #f8f9fa;
-  --white:    #ffffff;
-  --radius:   12px;
-  --shadow:   0 2px 12px rgba(0,0,0,0.08);
+  /* ── Surfaces ────────────────────────────────────────── */
+  --canvas:           #f5f1ec;   /* cream page background  */
+  --surface-1:        #ffffff;   /* floating white cards   */
+  --surface-2:        #ebe7e1;   /* alt band / tinted rows */
+  --inverse-canvas:   #111111;   /* dark hero / callout    */
+  --inverse-surface:  #313130;
+
+  /* ── Text ────────────────────────────────────────────── */
+  --ink:              #111111;
+  --ink-muted:        #626260;
+  --ink-subtle:       #7b7b78;
+  --ink-tertiary:     #9c9fa5;
+  --inverse-ink:      #ffffff;
+  --inverse-ink-muted:#9c9fa5;
+
+  /* ── Borders ─────────────────────────────────────────── */
+  --hairline:         #d3cec6;
+  --hairline-soft:    #ebe7e1;
+
+  /* ── Accent ──────────────────────────────────────────── */
+  --fin-orange:       #ff5600;   /* primary interactive accent */
+  --brand-blue:       #0007cb;
+
+  /* ── Semantic ────────────────────────────────────────── */
+  --semantic-success: #0bdf50;
+  --semantic-error:   #c41c1c;
+
+  /* ── Report / chart palette ──────────────────────────── */
+  --report-blue:      #65b5ff;
+  --report-orange:    #fe4c02;
+  --report-green:     #0bdf50;
+  --report-pink:      #ff2067;
+  --report-lime:      #b3e01c;
+  --report-cyan:      #03b2cb;
+
+  /* ── Severity tints (warm cream-tuned) ───────────────── */
+  --tint-healthy:     #d4f5d8;
+  --tint-warning:     #ffe4cc;
+  --tint-error:       #fce3db;
+  --tint-info:        #e2edf7;
+
+  /* ── Radius ──────────────────────────────────────────── */
+  --radius-xs:        4px;
+  --radius-sm:        6px;
+  --radius-md:        8px;
+  --radius-lg:        12px;
+  --radius-xl:        16px;
+  --radius-xxl:       24px;
+  --radius-pill:      9999px;
+  --radius-full:      9999px;
+
+  /* ── Elevation (hairline-based — no heavy shadows) ───── */
+  --shadow:           0 0 0 1px var(--hairline);
+  --shadow-1:         0 0 0 1px var(--hairline);
+  --shadow-2:         0 0 0 1px var(--hairline), 0 2px 8px rgba(17,17,17,0.06);
+  --shadow-3:         0 0 0 1px var(--hairline), 0 4px 16px rgba(17,17,17,0.10);
+
+  /* ── Legacy aliases (component compatibility) ────────── */
+  --primary:          var(--fin-orange);
+  --primary-pressed:  #d94700;
+  --on-primary:       #ffffff;
+  --brand-navy:       var(--inverse-canvas);
+  --brand-navy-mid:   var(--inverse-surface);
+  --brand-orange:     var(--fin-orange);
+  --brand-teal:       var(--report-cyan);
+  --brand-green:      var(--semantic-success);
+  --brand-yellow:     #f5d75e;
+  --link-blue:        var(--brand-blue);
+  --on-dark:          var(--inverse-ink);
+  --on-dark-muted:    var(--inverse-ink-muted);
+  --charcoal:         var(--ink);
+  --slate:            var(--ink-muted);
+  --stone:            var(--ink-subtle);
+  --steel:            var(--ink-subtle);
+  --muted:            var(--ink-tertiary);
+  --surface:          var(--canvas);
+  --surface-soft:     var(--surface-1);
+  --hairline-strong:  var(--hairline);
+  --success:          var(--semantic-success);
+  --error:            var(--semantic-error);
+  --warning:          var(--fin-orange);
+  --tint-mint:        var(--tint-healthy);
+  --tint-peach:       var(--tint-warning);
+  --tint-rose:        var(--tint-error);
+  --tint-yellow:      var(--tint-warning);
+  --tint-sky:         var(--tint-info);
+  --tint-lavender:    #ece8f8;
+  --tint-cream:       var(--canvas);
+  --ocean:            var(--report-blue);
+  --teal:             var(--report-cyan);
+  --coral:            var(--fin-orange);
+  --amber:            var(--brand-yellow);
+  --gray-900:         var(--ink);
+  --gray-600:         var(--ink-muted);
+  --gray-200:         var(--hairline);
+  --gray-100:         var(--canvas);
+  --white:            var(--surface-1);
+  --radius:           var(--radius-lg);
 }
 
 body {
-  font-family: 'Inter', sans-serif;
-  background: #0a1628;
-  color: var(--gray-900);
+  font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
   min-height: 100vh;
+  font-size: 16px;
+  line-height: 1.50;
 }
 
-h1, h2 {
-  font-family: 'Playfair Display', serif;
-  font-weight: 700;
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  line-height: 1.20;
+  letter-spacing: -0.02em;
+  color: var(--ink);
 }
-
-/* Leaflet fix */
-.leaflet-container { border-radius: var(--radius); }

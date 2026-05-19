@@ -1,15 +1,15 @@
-// Severity styles tuned for the dark panel background
+// Severity styles using Notion design system pastel tints
 const STYLES = {
-  healthy:   { bg: 'rgba(46, 204, 113, 0.14)', color: '#6ee7b7', bar: '#2ecc71' },
-  stressed:  { bg: 'rgba(243, 156, 18, 0.14)', color: '#fcd34d', bar: '#f39c12' },
-  bleaching: { bg: 'rgba(231, 76, 60, 0.14)',  color: '#fca5a5', bar: '#e74c3c' },
-  severe:    { bg: 'rgba(192, 57, 43, 0.22)',  color: '#fca5a5', bar: '#e74c3c' },
-  critical:  { bg: 'rgba(255,255,255,0.06)',   color: 'rgba(255,255,255,0.75)', bar: '#6c757d' },
+  healthy:   { bg: 'var(--tint-mint)',    color: 'var(--success)',       dot: '#1aae39' },
+  stressed:  { bg: 'var(--tint-yellow)',  color: 'var(--brand-orange)',  dot: '#dd5b00' },
+  bleaching: { bg: 'var(--tint-peach)',   color: 'var(--brand-orange)',  dot: '#dd5b00' },
+  severe:    { bg: 'var(--tint-rose)',    color: 'var(--error)',         dot: '#e03131' },
+  critical:  { bg: 'var(--surface)',      color: 'var(--slate)',         dot: '#a4a097' },
 };
 
 export default function SeverityCard({ result, loading, label }) {
   if (loading) return (
-    <div style={{ padding: '14px 0', textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: '0.82rem' }}>
+    <div style={{ padding: '14px 0', textAlign: 'center', color: 'var(--stone)', fontSize: '0.8125rem' }}>
       Calculating…
     </div>
   );
@@ -22,26 +22,25 @@ export default function SeverityCard({ result, loading, label }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
 
-      {/* ── Compact result block ── */}
+      {/* Result block */}
       <div style={{
         background: style.bg,
-        borderRadius: 'var(--radius)',
-        padding: '12px 14px',
+        borderRadius: 'var(--radius-lg)',
+        padding: '14px 16px',
       }}>
-        {/* Single row: icon + label / percentage */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-          <span style={{ fontSize: '1.4rem', lineHeight: 1, flexShrink: 0 }}>
+          <span style={{ fontSize: '1.3rem', lineHeight: 1, flexShrink: 0 }}>
             {severity_level?.icon}
           </span>
           <div>
             <div style={{
-              fontSize: '0.72rem', color: style.color, opacity: 0.65,
-              lineHeight: 1, marginBottom: '3px',
+              fontSize: '0.6875rem', color: style.color, fontWeight: 500,
+              lineHeight: 1, marginBottom: '3px', opacity: 0.8,
             }}>
               {label || severity_level?.label}
             </div>
             <div style={{
-              fontSize: '1.8rem', fontWeight: 700, lineHeight: 1,
+              fontSize: '1.75rem', fontWeight: 700, lineHeight: 1,
               color: style.color,
             }}>
               {severity?.toFixed(0)}% bleaching
@@ -49,21 +48,20 @@ export default function SeverityCard({ result, loading, label }) {
           </div>
         </div>
 
-        {/* Plain English — same background, no separate box */}
         <p style={{
           margin: 0,
-          fontSize: '0.8rem', fontStyle: 'italic',
-          color: style.color, opacity: 0.75,
-          lineHeight: 1.45,
+          fontSize: '0.8125rem', fontStyle: 'italic',
+          color: style.color, opacity: 0.8,
+          lineHeight: 1.5,
         }}>
           {plain_text}
         </p>
       </div>
 
-      {/* ── Probability ── */}
-      <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.3)', textAlign: 'right' }}>
+      {/* Probability */}
+      <div style={{ fontSize: '0.6875rem', color: 'var(--stone)', textAlign: 'right' }}>
         Bleaching probability:{' '}
-        <strong style={{ color: 'rgba(255,255,255,0.55)' }}>
+        <strong style={{ color: 'var(--slate)' }}>
           {(probability * 100).toFixed(0)}%
         </strong>
       </div>

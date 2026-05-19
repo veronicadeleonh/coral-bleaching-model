@@ -1,0 +1,1 @@
+.venv/bin/python api/app.py & (cd client && npm start)

@@ -9,7 +9,7 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--dark)' }}>
       <Nav page={page} setPage={setPage} />
-      <main style={{ paddingTop: '70px' }}>
+      <main style={{ paddingTop: '56px' }}>
         {page === 'explorer' ? <Explorer /> : <Science />}
       </main>
     </div>
