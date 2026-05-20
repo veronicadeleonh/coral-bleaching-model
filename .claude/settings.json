@@ -6,6 +6,9 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); exp=d.get\\(''''exports'''',{}\\); print\\(list\\(exp.keys\\(\\)\\)\\)\")",
       "Bash(lsof -ti:5001)",
       "Bash(kill 30060 30185)"
+    ],
+    "additionalDirectories": [
+      "/Users/veronica/Desktop"
     ]
   }
 }
