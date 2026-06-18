@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Node
+node_modules/
+client/node_modules/
+
 # Virtual environments
 .venv/
 env/
@@ -55,7 +59,7 @@ var/
 *.h5
 *.db
 *.pkl
-*.joblib
+# *.joblib  — models are tracked intentionally
 
 # Environment and credentials
 .env
