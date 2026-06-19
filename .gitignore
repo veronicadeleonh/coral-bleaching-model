@@ -82,3 +82,4 @@ credentials.json
 
 # Bandit security reports
 bandit.json
+.vercel

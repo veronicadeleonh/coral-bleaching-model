@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { API } from '../api';
 
 const SLIDER_CONFIG = [
   {
@@ -59,7 +60,7 @@ export default function Sliders({ vals, onValChange, historicalContext }) {
     if (!shouldFetch) return;
 
     lastShapVals.current = { ...vals };
-    fetch('/api/shap', {
+    fetch(API.shap, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(vals),

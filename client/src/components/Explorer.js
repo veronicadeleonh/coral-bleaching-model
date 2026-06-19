@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { API } from '../api';
 import ReefMap from './ReefMap';
 import Sliders from './Sliders';
 import SeverityCard from './SeverityCard';
@@ -47,7 +48,7 @@ export default function Explorer() {
   const runPredict = useCallback(async (v) => {
     setLoading(true);
     try {
-      const res = await fetch('/api/predict', {
+      const res = await fetch(API.predict, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(v),

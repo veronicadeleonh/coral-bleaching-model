@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { useFetch } from '../hooks/useFetch';
+import { API } from '../api';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
@@ -16,7 +17,7 @@ function bleachingColor(pct) {
 }
 
 export default function ReefMap({ selectedReef, onReefClick, onMapClick }) {
-  const { data: reefs, loading } = useFetch('/api/reefs');
+  const { data: reefs, loading } = useFetch(API.reefs);
   const containerRef = useRef(null);
   const mapRef       = useRef(null);
   const [hoverReef, setHoverReef]   = useState(null);

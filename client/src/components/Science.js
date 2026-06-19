@@ -1,4 +1,5 @@
 import { useFetch } from '../hooks/useFetch';
+import { API } from '../api';
 import {
   LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip,
@@ -66,8 +67,8 @@ const CARD = {
 };
 
 export default function Science() {
-  const { data: timeseries, loading: tsLoading } = useFetch('/api/timeseries');
-  const { data: reefs,      loading: rfLoading  } = useFetch('/api/reefs');
+  const { data: timeseries, loading: tsLoading } = useFetch(API.timeseries);
+  const { data: reefs,      loading: rfLoading  } = useFetch(API.reefs);
 
   const topReefs = reefs
     ?.sort((a, b) => b.avg_bleaching - a.avg_bleaching)
