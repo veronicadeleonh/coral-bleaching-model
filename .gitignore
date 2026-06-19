@@ -53,7 +53,7 @@ var/
 # Data files and logs
 *.log
 *.sqlite3
-*.csv
+# *.csv  — data files are tracked intentionally
 *.tsv
 *.parquet
 *.h5
