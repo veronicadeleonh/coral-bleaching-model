@@ -152,8 +152,11 @@ export default function ReefMap({ selectedReef, onReefClick, onMapClick }) {
 
       {/* Loading overlay */}
       {loading && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#e8f4f8', zIndex: 500 }}>
-          Loading map...
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#e8f4f8', zIndex: 500, gap: '12px' }}>
+          <div style={{ fontSize: '1.1rem', fontWeight: 500, color: '#2c3e50' }}>Loading reef data...</div>
+          <div style={{ fontSize: '0.85rem', color: '#7f8c8d', maxWidth: '280px', textAlign: 'center', lineHeight: 1.5 }}>
+            The server may take up to 30 seconds to wake up on first load. Thanks for your patience 🪸
+          </div>
         </div>
       )}
 
