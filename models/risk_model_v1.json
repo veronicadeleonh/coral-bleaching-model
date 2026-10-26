@@ -1,0 +1,33 @@
+{
+  "name": "reef_pulse_risk_v1",
+  "target": "P(percent_bleaching > 10%) in a Reef Check survey",
+  "data": "Reef Check 2003\u20132019, one row per survey (dev-notebooks/02)",
+  "features": [
+    "log_dhw",
+    "ssta_sd",
+    "lat_dev"
+  ],
+  "transforms": {
+    "log_dhw": "ln(1 + tsa_dhw)",
+    "lat_dev": "(abs(latitude) - 17.5)^2"
+  },
+  "mean": [
+    0.315042,
+    0.878898,
+    72.190332
+  ],
+  "scale": [
+    0.603901,
+    0.210556,
+    72.553258
+  ],
+  "coef": [
+    0.536863,
+    -0.321469,
+    -0.268313
+  ],
+  "intercept": -2.964796,
+  "dhw_p95": 4.23,
+  "dhw_p99": 9.59,
+  "baseline_rate": 0.0583
+}

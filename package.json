@@ -1,0 +1,24 @@
+{
+  "name": "corals",
+  "version": "1.0.0",
+  "description": "Coral bleaching is one of the most visible consequences of ocean warming — but the data behind it is rarely accessible to non-scientists. This project turns 40 years of global observations into an interactive web app where anyone can explore how rising temperatures affect coral reefs around the world.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently -n api,client -c cyan,magenta \".venv/bin/python api/app.py\" \"npm start --prefix client\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/veronicadeleonh/coral-bleaching-model.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/veronicadeleonh/coral-bleaching-model/issues"
+  },
+  "homepage": "https://github.com/veronicadeleonh/coral-bleaching-model#readme",
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
