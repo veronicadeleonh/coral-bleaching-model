@@ -225,7 +225,7 @@ dialog ul { padding-left: 18px; display: flex; flex-direction: column; gap: 10px
   body { overflow: auto; background-repeat: no-repeat; background-color: var(--abyss); }
   body[data-drawer="true"] .page { padding-bottom: 340px; }
   .stage { position: relative; height: 56vh; }
-  .stage::after { display: none; }
+  .stage::after { background: linear-gradient(180deg, transparent 72%, var(--bg) 100%); }
   .page { position: static; height: auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
   header { position: absolute; top: 20px; left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); }
   .story { width: 100%; }

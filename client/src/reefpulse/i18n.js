@@ -59,6 +59,7 @@ const EN = {
     'Model: a logistic regression with three inputs: accumulated heat stress, how much the water temperature usually swings, and distance from the 15–20° latitude belt.',
     'Read it as a regional risk, not a forecast for one reef. The coral’s whiteness shows the risk level, not the share of corals bleached.',
     'From 2023 to mid-2025 the fourth global bleaching event exposed 84% of the world’s reef area to bleaching-level heat stress (NOAA, GCRMN).',
+    'The corals in the background are 3D scans of museum specimens from the Smithsonian Institution, coloured as living tissue. The larger fish, the clam and the urchin are 3D scans by ffish.asia / floraZia.com. All are public domain (CC0).',
   ],
   language: 'Language',
 };
@@ -121,6 +122,7 @@ const ES = {
     'Modelo: una regresión logística con tres entradas: el estrés térmico acumulado, cuánto suele oscilar la temperatura del agua y la distancia a la franja de 15–20° de latitud.',
     'Léelo como un riesgo regional, no como un pronóstico para un arrecife concreto. El blanco del coral muestra el nivel de riesgo, no el porcentaje de corales blanqueados.',
     'Entre 2023 y mediados de 2025, el cuarto evento global de blanqueamiento expuso el 84 % de los arrecifes del mundo a un estrés térmico de nivel de blanqueamiento (NOAA, GCRMN).',
+    'Los corales del fondo son escaneos 3D de ejemplares de museo de la Smithsonian Institution, coloreados como tejido vivo. Los peces grandes, la almeja y el erizo son escaneos 3D de ffish.asia / floraZia.com. Todos son de dominio público (CC0).',
   ],
   language: 'Idioma',
 };

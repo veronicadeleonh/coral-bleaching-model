@@ -3,6 +3,14 @@
 /* eslint-disable no-use-before-define */
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import {
+  EffectComposer, RenderPass, EffectPass, BloomEffect, DepthOfFieldEffect, ToneMappingEffect, ToneMappingMode,
+  HueSaturationEffect, BrightnessContrastEffect, VignetteEffect, Effect, BlendFunction,
+} from 'postprocessing';
+import { N8AOPostPass } from 'n8ao';
 
 export function createEngine({ canvas, stage, reefs, riskOf, getState, onPick, onGlobe, onCloseUp, onReturn, text, assets }) {
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -10,9 +18,19 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').match
 const REEFS = reefs.map((r) => ({ n: r.name, lat: r.lat, lon: r.lon, sd: r.ssta_sd, o: r.ocean, c: r.n }));
 const T = () => text();
 
+// Render quality. 'high': every effect (desktop). 'low': no depth of field, lighter shading (phones).
+// 'off': plain render, no post-processing. Drops a level by itself if frames get slow.
+// ?quality=high|low|off forces a level; ?debug exposes the effects on window.__rp for tuning.
+const params = new URLSearchParams(window.location.search);
+const forced = ['high', 'low', 'off'].includes(params.get('quality')) ? params.get('quality') : null;
+const small = window.matchMedia('(max-width: 820px), (pointer: coarse)').matches;
+let tier = forced || (small ? 'low' : 'high');
+// With effects on, pixel ratio 1: depth of field and bloom soften the image anyway, and retina-density
+// rendering costs ~2x the frame time (measured on a MacBook: 13 fps at 2x vs 43 fps at 1x).
+const pixelRatioFor = (q) => Math.min(window.devicePixelRatio, q === 'off' ? 1.5 : 1);
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(pixelRatioFor(tier));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
@@ -29,8 +47,10 @@ controls.maxPolarAngle = Math.PI * 0.47; // stay above the sand
 controls.autoRotate = !reduceMotion;
 controls.autoRotateSpeed = 0.6;
 
-scene.add(new THREE.HemisphereLight(0xbdf3fb, 0x0e2e66, 1.7));
-const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+// Fill comes mostly from the water itself (environment map, below); the sun is a strong key light for contrast.
+const hemi = new THREE.HemisphereLight(0xbdf3fb, 0x0e2e66, 0.9);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff6e8, 1.9);
 sun.position.set(0.9, 3, 1.4);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -43,7 +63,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 // ── Sand floor: rippled sand that fades into the page, with caustics and the colony's shadow ──
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const sandU = { uSand: { value: new THREE.Color(cssVar('--sand') || '#DCD2BC') } };
-const sandMat = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0, transparent: true, depthWrite: false });
+const sandMat = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0, transparent: true, depthWrite: true });
 sandMat.onBeforeCompile = (sh) => {
   Object.assign(sh.uniforms, U, sandU);
   sh.vertexShader = sh.vertexShader
@@ -85,7 +105,36 @@ sand.position.y = -0.01; sand.receiveShadow = true;
 scene.add(sand);
 
 
-scene.fog = new THREE.Fog(cssVar('--fog') || '#17438C', 4.6, 9.5);
+// ── Water: the backdrop colour, also used as the fog colour, so distant reef dissolves into the water behind it ──
+// Same gradient as the page background (top: surface, bottom: abyss, a sun glow top right), computed per pixel.
+const srgbVec = (name, fb) => {
+  const n = parseInt((cssVar(name) || fb).replace('#', ''), 16);
+  return `vec3(${[(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => (v / 255).toFixed(4)).join(', ')})`;
+};
+const WATER_GLSL = `
+vec3 rpWater(vec2 uv) {
+  float t = clamp(1.0 - uv.y, 0.0, 1.0);
+  vec3 c = t < 0.34 ? mix(${srgbVec('--surface', '#2C6FD6')}, ${srgbVec('--fog', '#17438C')}, t / 0.34)
+         : t < 0.64 ? mix(${srgbVec('--fog', '#17438C')}, ${srgbVec('--bg', '#0E2E66')}, (t - 0.34) / 0.30)
+         : mix(${srgbVec('--bg', '#0E2E66')}, ${srgbVec('--abyss', '#08193D')}, (t - 0.64) / 0.36);
+  vec2 q = (vec2(uv.x, t) - vec2(0.62, -0.04)) / vec2(0.45, 0.35);
+  c = mix(c, ${srgbVec('--sun', '#73E9FB')}, 0.7 * clamp(1.0 - length(q) / 0.7, 0.0, 1.0));
+  return pow(c, vec3(2.2));
+}`;
+// Fog: colours fade to the water behind them; reds are absorbed first with distance, as under water.
+// fogNear / fogFar carry the drawing-buffer height / width (set in resize) so the fog can find the backdrop pixel.
+THREE.ShaderChunk.fog_pars_fragment = `#ifdef USE_FOG
+  uniform vec3 fogColor; varying float vFogDepth; uniform float fogNear; uniform float fogFar;
+  ${WATER_GLSL}
+#endif`;
+THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
+  {
+    vec2 rpUV = gl_FragCoord.xy / vec2(fogFar, fogNear);
+    gl_FragColor.rgb *= exp(-max(vFogDepth - 3.2, 0.0) * vec3(0.22, 0.06, 0.03));
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, rpWater(rpUV), smoothstep(3.6, 9.0, vFogDepth));
+  }
+#endif`;
+scene.fog = new THREE.Fog(cssVar('--fog') || '#17438C', 1, 1);
 const syncSand = () => {
   sandU.uSand.value.set(cssVar('--sand') || '#DCD2BC');
   syncDecor();
@@ -237,10 +286,12 @@ function growColony(seed, shape = 'bush') {
 // ── Material: bleaching + caustics injected into the standard shader ──
 const WATER = { value: new THREE.Color(cssVar('--fog') || '#17438C') };
 // soft: width of the white edge; larger = a gradual paling instead of a sharp front
-function coralMaterial(mute = 0, soft = 0.15) {
+// lag: background corals (mute > 0) bleach later than the specimen (level^lag), so the reef around it
+// still looks alive at moderate risk and catches up at extreme risk. The specimen shows the model's risk as is.
+function coralMaterial(mute = 0, soft = 0.15, lag = mute > 0 ? 1.8 : 1) {
   const m = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0 });
   m.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, U, { uBone: { value: BONE }, uMute: { value: mute }, uWater: WATER, uSoft: { value: soft } });
+    Object.assign(sh.uniforms, U, { uBone: { value: BONE }, uMute: { value: mute }, uWater: WATER, uSoft: { value: soft }, uLag: { value: lag } });
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
         attribute float aKey; attribute vec3 aBase; attribute float aGroove; varying float vKey; varying vec3 vBase; varying vec3 vW; varying float vGroove;`)
@@ -253,7 +304,7 @@ function coralMaterial(mute = 0, soft = 0.15) {
         #endif`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
-        uniform float uLevel; uniform float uTime; uniform float uCaustic; uniform vec3 uBone; uniform float uMute; uniform vec3 uWater; uniform float uSoft;
+        uniform float uLevel; uniform float uTime; uniform float uCaustic; uniform vec3 uBone; uniform float uMute; uniform vec3 uWater; uniform float uSoft; uniform float uLag;
         varying float vKey; varying vec3 vBase; varying vec3 vW; varying float vGroove;
         float caustic(vec2 p, float t) {
           vec2 q = p * 6.0;
@@ -264,7 +315,7 @@ function coralMaterial(mute = 0, soft = 0.15) {
           return pow(max(0.0, c / 3.0), 2.4);
         }`)
       .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `
-        float bl = smoothstep(vKey * (1.0 - uSoft), vKey * (1.0 - uSoft) + uSoft, uLevel);
+        float bl = smoothstep(vKey * (1.0 - uSoft), vKey * (1.0 - uSoft) + uSoft, pow(clamp(uLevel, 0.0, 1.0), uLag));
         // bleached skeleton keeps its relief: valleys stay a faint grey-pink
         vec3 skel = mix(uBone, uBone * vec3(0.8, 0.72, 0.72), vGroove);
         vec3 tissue = mix(vBase, skel, bl);
@@ -514,7 +565,7 @@ build(seed);
 // ── The reef around the specimen ────────────────────────────────
 // Branching colonies that bleach with the model (muted), plus decor that does not bleach:
 // sea fans and sponges have no symbiotic algae (most gorgonians, all sponges), live rock is rock.
-const DECOR_MUTE = 0.18;
+const DECOR_MUTE = 0.06;
 const muted = (hex, k = DECOR_MUTE) => {
   const c = new THREE.Color(hex), g = (c.r * 0.299 + c.g * 0.587 + c.b * 0.114);
   return c.lerp(new THREE.Color(g, g, g).lerp(WATER.value, 0.5), k);
@@ -528,13 +579,16 @@ function decorMaterial(hex, opts = {}) {
 }
 function syncDecor() { decorMats.forEach((m) => m.color.copy(muted(m.userData.hex))); }
 
+const rocks = [];
 // Live rock: lumpy, porous, mottled with coralline algae (pink, purple), green turf and brown film
-const liveRockMat = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0 });
+// pScale: noise frequency for the mottling (procedural rocks are ~2 units across, scans are normalised to 1)
+function makeRockMat(pScale = 1, seed = 0, normalMap = null) {
+const liveRockMat = new THREE.MeshStandardMaterial({ roughness: 1, metalness: 0, normalMap });
 liveRockMat.onBeforeCompile = (sh) => {
-  Object.assign(sh.uniforms, { uMute: { value: 0.08 }, uWater: WATER });
+  Object.assign(sh.uniforms, { uMute: { value: 0.08 }, uWater: WATER, uPScale: { value: pScale }, uSeed: { value: seed } });
   sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nvarying vec3 vP;')
-    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position;');
+    .replace('#include <common>', '#include <common>\nvarying vec3 vP; uniform float uPScale; uniform float uSeed;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = position * uPScale + uSeed;');
   sh.fragmentShader = sh.fragmentShader
     .replace('#include <common>', `#include <common>
       uniform float uMute; uniform vec3 uWater; varying vec3 vP;
@@ -554,8 +608,41 @@ liveRockMat.onBeforeCompile = (sh) => {
       col = mix(col, mix(vec3(g), uWater, 0.5), uMute);
       vec4 diffuseColor = vec4(col, opacity);`);
 };
+return liveRockMat;
+}
+const liveRockMat = makeRockMat();
+
+// Scanned rocks (Poly Haven, CC0): their shape and relief, painted with the live-rock shader
+const ROCK_KINDS = ['rock_crag', 'rock_slab', 'rock_round'];
+const rockTemplates = {};
+function loadRocks() {
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  return Promise.all(ROCK_KINDS.map((kind) => new Promise((resolve) => {
+    loader.load(`${assets}/models/${kind}${process.env.REACT_APP_SCAN_EXT || '.glb'}`, (res) => {
+      res.scene.updateMatrixWorld(true);
+      res.scene.traverse((o) => {
+        if (o.isMesh && !rockTemplates[kind]) {
+          const geo = o.geometry.clone().applyMatrix4(o.matrixWorld);
+          geo.computeBoundingBox();
+          rockTemplates[kind] = { geo, normalMap: o.material.normalMap || null };
+        }
+      });
+      resolve();
+    }, undefined, () => resolve());
+  })));
+}
+let rockCount = 0;
 function liveRock(seed, r) {
-  const g = new THREE.IcosahedronGeometry(1, 5);
+  const t = rockTemplates[ROCK_KINDS[rockCount++ % ROCK_KINDS.length]];
+  if (t) {
+    const m = new THREE.Mesh(t.geo, makeRockMat(2.4, seed * 3.7, t.normalMap));
+    m.scale.setScalar(r * 2.1);
+    rocks.push(m);
+    m.castShadow = true; m.receiveShadow = true;
+    return m;
+  }
+  // fallback while (or if) the scans can't load: a lumpy procedural rock
+  const g = mergeVertices(new THREE.IcosahedronGeometry(1, 5).deleteAttribute('normal').deleteAttribute('uv'));
   const pos = g.attributes.position, v = new THREE.Vector3();
   for (let k = 0; k < pos.count; k++) {
     v.fromBufferAttribute(pos, k);
@@ -567,6 +654,7 @@ function liveRock(seed, r) {
   g.computeVertexNormals();
   const m = new THREE.Mesh(g, liveRockMat);
   m.scale.set(r * 1.35, r * 0.8, r);
+  rocks.push(m);
   m.castShadow = true; m.receiveShadow = true;
   return m;
 }
@@ -614,7 +702,7 @@ function barrelSponge(seed, r, hex) {
   return m;
 }
 function blob(seed, r, hex, flat = 0.45) {
-  const g = new THREE.IcosahedronGeometry(1, 4);
+  const g = mergeVertices(new THREE.IcosahedronGeometry(1, 4).deleteAttribute('normal').deleteAttribute('uv'));
   const pos = g.attributes.position, v = new THREE.Vector3();
   for (let k = 0; k < pos.count; k++) {
     v.fromBufferAttribute(pos, k);
@@ -644,118 +732,172 @@ const REEF = [
   () => place(barrelSponge(4, 0.22, '#D9782E'), 1.95, -0.25, 0.02),
   () => place(blob(6, 0.16, '#E2B43A', 0.35), 1.2, -1.0, 0.03),
   () => place(blob(7, 0.12, '#E07A3A', 0.4), -0.25, -1.5, 0.03),
-  () => { const g = new THREE.Group(); buildMassive(51, g, { shape: 'brain', detail: false, mute: 0.5 }); g.scale.setScalar(0.75); place(g, -1.0, -1.15, 0.02); },
   () => { const g = new THREE.Group(); buildMassive(52, g, { shape: 'boulder', detail: false, mute: 0.5 }); g.scale.setScalar(0.7); place(g, 2.65, 0.2, 0.02); },
-  () => { const g = new THREE.Group(); buildMassive(53, g, { shape: 'brain', detail: false, mute: 0.55 }); g.scale.setScalar(0.55); place(g, 2.1, -1.15, 0.02); },
 ];
 // Branching colonies of the same kind as the specimen: they bleach with it, muted
 const BACK = [
-  { shape: 'table', x: 1.55, z: -0.45, s: 0.55 }, { shape: 'bush', x: 0.45, z: -1.3, s: 0.45 },
+  { shape: 'table', x: 1.55, z: -0.45, s: 0.55 },
   { shape: 'tall', x: -0.15, z: -2.25, s: 0.42 }, { shape: 'table', x: 1.85, z: -2.25, s: 0.62 },
 ];
-[...REEF, ...BACK.map((c, i) => () => {
-  const g = new THREE.Group();
-  build(40 + i * 7, g, { shape: c.shape, detail: false, mute: 0.5 });
-  g.scale.setScalar(c.s);
-  place(g, c.x, c.z, 0.02, i * 1.7);
-})].forEach((fn, i) => setTimeout(fn, 250 + i * 60));
-
-// ── Fish: now and then a small school of anthias crosses the reef ──
-// Shared fish parts (head points to +x; ~0.12 long). Body: tapered profile with a pointed snout
-// and a narrow tail stem, orange back fading to a golden belly.
-const L = 0.12;
-const fishBodyGeo = (() => {
-  const g = new THREE.SphereGeometry(1, 28, 16);
-  const pos = g.attributes.position, col = [], back = new THREE.Color('#F2762E'), belly = new THREE.Color('#F7B63C'), v = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    const t = (v.x + 1) / 2;                                   // 0 tail stem … 1 snout
-    // rounded head (an ellipse arc), body tapering to a narrow tail stem
-    const prof = t >= 0.55 ? Math.sqrt(Math.max(0.0, 1 - ((t - 0.55) / 0.47) ** 2))
-      : 0.2 + 0.8 * Math.pow(Math.sin((Math.PI / 2) * (t / 0.55)), 1.3);
-    const snout = 1;
-    const hy = 0.1 * prof * snout * (v.y < 0 ? 1.12 : 1);      // a little deeper below
-    const hz = 0.04 * prof * snout;
-    pos.setXYZ(i, v.x * L / 2, v.y * hy * L / 0.5, v.z * hz * L / 0.5);
-    const c = back.clone().lerp(belly, Math.min(1, Math.max(0, 0.5 - v.y * 0.9))).lerp(belly, (1 - t) * 0.35);
-    col.push(c.r, c.g, c.b);
-  }
-  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  g.computeVertexNormals();
-  return g;
-})();
-const fishMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.08 });
-const finMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#F8C24A'), roughness: 0.6, metalness: 0, side: THREE.DoubleSide, transparent: true, opacity: 0.82 });
-const eyeMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#0B0B10'), roughness: 0.2, metalness: 0.3 });
-const irisMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#E8D27A'), roughness: 0.4, metalness: 0.2 });
-const shapeGeo = (pts, curve) => {
-  const sh = new THREE.Shape();
-  sh.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i < pts.length; i++) {
-    const [x, y, cx, cy] = pts[i];
-    if (cx !== undefined) sh.quadraticCurveTo(cx, cy, x, y); else sh.lineTo(x, y);
-  }
-  return new THREE.ShapeGeometry(sh, 12);
+// Build the reef once the rock scans are in (or after 3 s), then the scans that sit on the rocks
+const REEF_T = 250 + (REEF.length + BACK.length) * 60;   // when the hand-placed reef is complete
+let reefStarted = false;
+const startReef = () => {
+  if (reefStarted || disposed) return;
+  reefStarted = true;
+  [...REEF, ...BACK.map((c, i) => () => {
+    const g = new THREE.Group();
+    build(40 + i * 7, g, { shape: c.shape, detail: false, mute: 0.5 });
+    g.scale.setScalar(c.s);
+    place(g, c.x, c.z, 0.02, i * 1.7);
+  })].forEach((fn, i) => setTimeout(fn, 250 + i * 60));
+  setTimeout(loadScans, REEF_T + 200);
+  setTimeout(loadCritters, REEF_T + 600);
+  setTimeout(loadSwimmers, REEF_T + 1000);
 };
-// Tail: lunate (crescent) fin with a curved, concave trailing edge
-const fishTailGeo = shapeGeo([[0, 0.006], [-0.042, 0.034, -0.018, 0.026], [-0.03, 0, -0.022, 0.012], [-0.042, -0.034, -0.022, -0.012], [0, -0.006, -0.018, -0.026], [0, 0.006]]);
-// Dorsal fin: tall front, sloping back, rounded edge
-const dorsalGeo = shapeGeo([[0.02, 0], [0.002, 0.028, 0.016, 0.026], [-0.034, 0.006, -0.02, 0.024], [-0.03, 0], [0.02, 0]]);
-// Anal fin underneath, and a small pelvic fin
-const analGeo = shapeGeo([[0.0, 0], [-0.012, -0.018, 0.0, -0.016], [-0.03, -0.004, -0.024, -0.016], [-0.026, 0], [0, 0]]);
-const pelvicGeo = shapeGeo([[0.012, 0], [0.0, -0.014, 0.01, -0.012], [-0.006, 0], [0.012, 0]]);
-const pecGeo = shapeGeo([[0, 0], [-0.016, 0.008, -0.006, 0.01], [-0.018, -0.004, -0.02, 0.003], [0, 0]]);
-const eyeGeo = new THREE.SphereGeometry(0.0028, 10, 8), irisGeo = new THREE.SphereGeometry(0.0042, 12, 8);
-const school = [];
-function makeFish() {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(fishBodyGeo, fishMat); body.castShadow = true;
-  const tail = new THREE.Group(); tail.position.x = -L / 2 + 0.004;
-  tail.add(new THREE.Mesh(fishTailGeo, finMat));
-  const dorsal = new THREE.Mesh(dorsalGeo, finMat); dorsal.position.set(0.0, 0.019, 0); dorsal.scale.set(0.85, 0.75, 1);
-  const anal = new THREE.Mesh(analGeo, finMat); anal.position.set(-0.008, -0.018, 0); anal.scale.set(0.9, 0.8, 1);
-  const pelvic = new THREE.Mesh(pelvicGeo, finMat); pelvic.position.set(0.016, -0.022, 0);
-  const pecL = new THREE.Mesh(pecGeo, finMat); pecL.position.set(0.022, -0.004, 0.009); pecL.rotation.y = -0.5;
-  const pecR = new THREE.Mesh(pecGeo, finMat); pecR.position.set(0.022, -0.004, -0.009); pecR.rotation.y = 0.5;
-  g.add(body, tail, dorsal, anal, pelvic, pecL, pecR);
-  for (const side of [1, -1]) {
-    const iris = new THREE.Mesh(irisGeo, irisMat); iris.position.set(0.036, 0.005, side * 0.0046); iris.scale.z = 0.5;
-    const eye = new THREE.Mesh(eyeGeo, eyeMat); eye.position.set(0.0362, 0.005, side * 0.0062); eye.scale.z = 0.5;
-    g.add(iris, eye);
+
+// ── Scanned corals: real skeletons (Smithsonian Institution, CC0), given live tissue colour by the coral
+//    shader so they bleach with the model like everything else. Each sits on its rock or on the sand.
+// file, x, z, size (largest dimension), turn, sink, tissue colour, paler tip colour, on a rock?
+const SCANS = [
+  ['diploria', -1.0, -1.15, 0.5, 0.6, 0.03, '#B3893C', '#D8C27A', false],   // brain coral, golden brown
+  ['acropora', 1.3, -1.45, 0.62, 2.2, 0.05, '#A0954F', '#C4B6EC', true],    // tabletop Acropora, olive with lavender tips
+  ['millepora', 2.45, -0.85, 0.5, 0.9, 0.04, '#C9A447', '#F1E4A8', true],   // fire coral, mustard yellow, white tips
+  ['seriatopora', -0.6, -1.95, 0.46, 1.4, 0.04, '#D0869F', '#F4C9D6', true], // bird's-nest coral, pink
+  ['pocillopora', 2.1, -1.2, 0.42, 0.2, 0.03, '#A9745F', '#E0B7A4', false], // cauliflower coral, pinkish brown
+  ['favia', 1.15, 0.75, 0.2, 0.4, 0.03, '#8E8A3A', '#C9C27A', true],        // small massive coral on the near rock
+];
+const down = new THREE.Raycaster(), downDir = new THREE.Vector3(0, -1, 0), from = new THREE.Vector3();
+function surfaceAt(x, z, onRock) {
+  if (onRock && rocks.length) {
+    reefBack.updateMatrixWorld(true);
+    down.set(from.set(x, 3, z), downDir);
+    const hit = down.intersectObjects(rocks, false)[0];
+    if (hit) return hit.point.y;
   }
-  g.userData.tail = tail; g.userData.pecs = [pecL, pecR]; g.userData.body = body;
-  return g;
+  return seabed(x, z);
 }
-function spawnSchool() {
-  if (school.length) return;
-  const dir = Math.random() < 0.5 ? 1 : -1;
-  const n = 3 + Math.floor(Math.random() * 5);
-  const y = 0.55 + Math.random() * 0.9, z = -1.4 + Math.random() * 1.9;
-  const speed = 0.32 + Math.random() * 0.18;
+function dressScan(mesh, tissueHex, tipHex) {
+  const g = mesh.geometry, pos = g.attributes.position, n = pos.count;
+  g.computeBoundingBox();
+  const { min, max } = g.boundingBox, h = Math.max(1e-6, max.y - min.y);
+  const base = new THREE.Color(tissueHex), tip = new THREE.Color(tipHex), c = new THREE.Color();
+  const aBase = new Float32Array(n * 3), raw = new Float32Array(n);
   for (let i = 0; i < n; i++) {
-    const f = makeFish();
-    f.userData = { ...f.userData, dir, speed: speed * (0.9 + Math.random() * 0.2), phase: Math.random() * 6,
-      off: new THREE.Vector3(-dir * (i * 0.12 + Math.random() * 0.08), (Math.random() - 0.5) * 0.22, (Math.random() - 0.5) * 0.35) };
-    f.position.set(-dir * 3.6, y, z).add(f.userData.off);
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), hn = (y - min.y) / h;
+    const nz = noise3(x * 9, y * 9, z * 9, 7);
+    // upper surfaces pale towards the tip colour and bleach first
+    c.copy(base).lerp(tip, Math.max(0, Math.min(1, (hn - 0.55) * 1.6)) * 0.7).multiplyScalar(0.9 + nz * 0.2);
+    aBase.set([c.r, c.g, c.b], i * 3);
+    raw[i] = (1 - hn) * 0.55 + nz * 0.45;
+  }
+  const order = Array.from(raw.keys()).sort((a, b) => raw[a] - raw[b]), keys = new Float32Array(n);
+  order.forEach((i, rank) => { keys[i] = rank / (n - 1); });
+  g.setAttribute('aBase', new THREE.BufferAttribute(aBase, 3));
+  g.setAttribute('aKey', new THREE.BufferAttribute(keys, 1));
+  g.setAttribute('aGroove', new THREE.BufferAttribute(new Float32Array(n), 1));
+  const src = mesh.material, m = coralMaterial(0.22, 0.2);
+  m.normalMap = src.normalMap || null; m.aoMap = src.aoMap || null; m.aoMapIntensity = 1;
+  if (src.normalScale) m.normalScale.copy(src.normalScale);
+  src.dispose();
+  mesh.material = m; mesh.castShadow = true; mesh.receiveShadow = true;
+}
+const gltf = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+function loadScans() {
+  SCANS.forEach(([file, x, z, size, rot, sink, tissue, tipHex, onRock]) => {
+    gltf.load(scanURL(file), (res) => {
+      if (disposed) return;
+      const obj = res.scene;
+      obj.traverse((o) => { if (o.isMesh) dressScan(o, tissue, tipHex); });
+      obj.scale.setScalar(size); obj.rotation.y = rot;
+      obj.position.set(x, surfaceAt(x, z, onRock) - sink, z);
+      reefBack.add(obj);
+    }, undefined, (err) => console.warn('Reef Pulse: could not load scan', file, err));
+  });
+}
+// After the hand-built reef is in place (rocks are needed to find where each scan sits)
+
+// ── Reef life scans (ffish.asia / floraZia.com, CC0): a clam and an urchin on the reef, and now and then
+//    a larger fish crosses. Fish swim with a body wave in the vertex shader, so no animation data is needed.
+const scanURL = (file) => `${assets}/models/${file}${process.env.REACT_APP_SCAN_EXT || '.glb'}`;
+const CRITTERS = [
+  // file, x, z, size, turn, sink, on a rock?
+  ['clam', -1.15, -0.7, 0.2, 2.4, 0.03, true],   // boring clam, Tridacna crocea, set into the rock
+  ['urchin', 0.95, -0.95, 0.15, 0.8, 0.02, false],
+];
+function loadCritters() {
+  CRITTERS.forEach(([file, x, z, size, rot, sink, onRock]) => {
+    gltf.load(scanURL(file), (res) => {
+      if (disposed) return;
+      const obj = res.scene;
+      obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.material.roughness = 0.75; o.material.metalness = 0; } });
+      obj.scale.setScalar(size); obj.rotation.y = rot;
+      obj.position.set(x, surfaceAt(x, z, onRock) - sink, z);
+      reefBack.add(obj);
+    });
+  });
+}
+
+const SWIMMERS = [
+  { file: 'parrotfish', size: 0.34, count: [1, 1], speed: 0.2, beat: 5 },
+  { file: 'coralfish', size: 0.2, count: [1, 3], speed: 0.26, beat: 7 },
+  { file: 'angelfish', size: 0.21, count: [1, 2], speed: 0.24, beat: 6 },
+];
+const swimTemplates = {};
+function swimMaterial(src) {
+  const m = src.clone();
+  m.roughness = 0.45; m.metalness = 0;
+  m.userData.uPhase = { value: Math.random() * 6.28 }; m.userData.uBeat = { value: 6 };
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, { uTime: U.uTime, uPhase: m.userData.uPhase, uBeat: m.userData.uBeat });
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uTime; uniform float uPhase; uniform float uBeat;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        // head at -x, tail at +x (model units, length 1): the wave grows towards the tail
+        float tailw = smoothstep(-0.3, 0.5, position.x);
+        transformed.z += sin(position.x * 7.0 - uTime * uBeat + uPhase) * 0.06 * tailw;`);
+  };
+  return m;
+}
+function loadSwimmers() {
+  SWIMMERS.forEach((sp) => gltf.load(scanURL(sp.file), (res) => { if (!disposed) swimTemplates[sp.file] = res.scene; }));
+}
+loadRocks().then(startReef);
+setTimeout(startReef, 3000);
+const visitors = [];
+let nextVisit = 8 + Math.random() * 6;
+function spawnVisitors() {
+  const ready = SWIMMERS.filter((sp) => swimTemplates[sp.file]);
+  if (!ready.length || visitors.length) return;
+  const sp = ready[Math.floor(Math.random() * ready.length)];
+  const dir = Math.random() < 0.5 ? 1 : -1, n = sp.count[0] + Math.floor(Math.random() * (sp.count[1] - sp.count[0] + 1));
+  const y = 0.3 + Math.random() * 0.45, z = -1.3 + Math.random() * 1.6;
+  for (let i = 0; i < n; i++) {
+    const f = new THREE.Group(), body = swimTemplates[sp.file].clone(true);
+    body.traverse((o) => { if (o.isMesh) { o.material = swimMaterial(o.material); o.material.userData.uBeat.value = sp.beat * (0.9 + Math.random() * 0.2); o.castShadow = true; } });
+    body.rotation.y = Math.PI;            // head towards +x, the direction of travel before the turn below
+    f.add(body);
+    f.scale.setScalar(sp.size * (0.9 + Math.random() * 0.2));
+    f.userData = { dir, speed: sp.speed * (0.9 + Math.random() * 0.2), phase: Math.random() * 6 };
+    f.position.set(-dir * (3.8 + i * 0.35), y + (Math.random() - 0.5) * 0.25, z + (Math.random() - 0.5) * 0.4);
     f.rotation.y = dir > 0 ? 0 : Math.PI;
-    f.scale.setScalar(0.85 + Math.random() * 0.35);
-    scene.add(f); school.push(f);
+    scene.add(f); visitors.push(f);
   }
 }
-function updateFish(dt, t) {
-  for (let i = school.length - 1; i >= 0; i--) {
-    const f = school[i], u = f.userData;
+function updateVisitors(dt, t) {
+  for (let i = visitors.length - 1; i >= 0; i--) {
+    const f = visitors[i], u = f.userData;
     f.position.x += u.dir * u.speed * dt;
-    f.position.y += Math.sin(t * 1.3 + u.phase) * 0.0012;
-    f.position.z += Math.sin(t * 0.7 + u.phase) * 0.0009;
-    u.tail.rotation.y = Math.sin(t * 12 + u.phase) * 0.5;
-    f.rotation.y = (u.dir > 0 ? 0 : Math.PI) + Math.sin(t * 12 + u.phase - 1) * 0.06; // the whole body sways a little
-    u.pecs[0].rotation.y = -0.5 + Math.sin(t * 9 + u.phase) * 0.35;
-    u.pecs[1].rotation.y = 0.5 - Math.sin(t * 9 + u.phase) * 0.35;
-    if (Math.abs(f.position.x) > 4) { scene.remove(f); school.splice(i, 1); }
+    f.position.y += Math.sin(t * 0.9 + u.phase) * 0.0008;
+    f.rotation.y = (u.dir > 0 ? 0 : Math.PI) + Math.sin(t * 0.6 + u.phase) * 0.08;
+    if (Math.abs(f.position.x) > 4.5) {
+      scene.remove(f);
+      f.traverse((o) => { if (o.isMesh) o.material.dispose(); });
+      visitors.splice(i, 1);
+    }
   }
 }
-let nextSchool = 3 + Math.random() * 5;
+
 
 // ── Marine snow: slow particles in the water ───────────────────
 const snowGeo = new THREE.BufferGeometry();
@@ -769,6 +911,181 @@ const snow = new THREE.Points(snowGeo, new THREE.ShaderMaterial({
 }));
 scene.add(snow);
 
+// ── Backdrop: the open water behind the reef, with a shimmering surface and light rays from the sun ──
+const backdropU = { uRes: { value: new THREE.Vector2(1, 1) } };
+const backdrop = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  depthWrite: false, depthTest: false, fog: false,
+  uniforms: { ...backdropU, uTime: U.uTime, uCaustic: U.uCaustic },
+  vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.9999, 1.0); }',
+  fragmentShader: `uniform vec2 uRes; uniform float uTime; uniform float uCaustic;
+    ${WATER_GLSL}
+    float h2(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float n2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(h2(i), h2(i + vec2(1, 0)), f.x), mix(h2(i + vec2(0, 1)), h2(i + vec2(1, 1)), f.x), f.y); }
+    void main(){
+      vec2 uv = gl_FragCoord.xy / uRes;
+      vec3 c = rpWater(uv);
+      float t = 1.0 - uv.y;
+      // The surface seen from below: bright ripples, stretched by perspective towards the top edge
+      float band = 1.0 - smoothstep(0.0, 0.24, t);
+      vec2 p = vec2((uv.x - 0.55) / (t + 0.15) * 2.6, 1.4 / (t + 0.15));
+      float w = n2(p + vec2(uTime * 0.12, uTime * 0.05)) * 0.6 + n2(p * 2.2 - vec2(uTime * 0.09, 0.0)) * 0.4;
+      float ridge = pow(1.0 - abs(w * 2.0 - 1.0), 5.0);
+      c += uCaustic * band * band * ridge * vec3(0.55, 0.85, 1.0) * 0.85;
+      // Rays fanning down from the sun glow
+      vec2 d = (vec2(uv.x, t) - vec2(0.62, -0.1)) * vec2(uRes.x / uRes.y, 1.0);
+      float ang = atan(d.x, d.y);
+      float r = n2(vec2(ang * 9.0, uTime * 0.06)) * 0.65 + n2(vec2(ang * 23.0 + 3.0, uTime * 0.1)) * 0.35;
+      c += uCaustic * smoothstep(0.5, 1.0, r) * exp(-length(d) * 1.5) * smoothstep(1.0, 0.1, t) * vec3(0.45, 0.8, 1.0) * 0.45;
+      gl_FragColor = vec4(c, 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`,
+}));
+backdrop.frustumCulled = false; backdrop.renderOrder = -1000;
+scene.add(backdrop);
+
+// ── Light shafts: soft beams leaning towards the sun, in front of and behind the colony ──
+const sunDir = sun.position.clone().normalize();
+const shaftMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false,
+  uniforms: { uTime: U.uTime, uCaustic: U.uCaustic },
+  vertexShader: `attribute float aSeed; varying vec2 vUv; varying float vDist; varying float vSeed;
+    void main(){ vUv = uv; vSeed = aSeed; vec4 mv = modelViewMatrix * vec4(position, 1.0); vDist = -mv.z; gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `uniform float uTime; uniform float uCaustic; varying vec2 vUv; varying float vDist; varying float vSeed;
+    void main(){
+      float edge = smoothstep(0.0, 0.5, vUv.x) * smoothstep(1.0, 0.5, vUv.x);
+      float rise = smoothstep(0.0, 0.7, vUv.y) * (1.0 - smoothstep(0.85, 1.0, vUv.y) * 0.5);
+      float flick = 0.6 + 0.4 * sin(uTime * 0.5 + vSeed * 6.28 + vUv.y * 2.5);
+      float a = edge * edge * rise * flick * smoothstep(0.8, 2.0, vDist) * exp(-max(vDist - 4.0, 0.0) * 0.35);
+      gl_FragColor = vec4(vec3(0.5, 0.82, 1.0) * a * 0.09 * uCaustic, 1.0);
+      #include <colorspace_fragment>
+    }`,
+});
+const SHAFTS = [[-0.9, -0.7, 0.45], [0.55, -1.7, 0.6], [1.9, -1.0, 0.35], [2.9, -2.3, 0.7], [-0.35, 1.15, 0.28], [1.25, 0.55, 0.22], [-1.9, -2.4, 0.8]];
+const shafts = SHAFTS.map(([x, z, w], i) => {
+  const g = new THREE.PlaneGeometry(1, 1); g.translate(0, 0.5, 0);
+  g.setAttribute('aSeed', new THREE.Float32BufferAttribute(new Array(4).fill(i / SHAFTS.length), 1));
+  const m = new THREE.Mesh(g, shaftMat);
+  m.scale.set(w, 5.5, 1); m.position.set(x, seabed(x, z) - 0.05, z); m.renderOrder = 10;
+  scene.add(m);
+  return m;
+});
+const shaftBasis = new THREE.Matrix4(), toCam = new THREE.Vector3(), side = new THREE.Vector3();
+function faceShafts() {
+  // Each beam turns around its own (sun-leaning) axis to face the camera
+  for (const s of shafts) {
+    toCam.copy(camera.position).sub(s.position);
+    toCam.addScaledVector(sunDir, -toCam.dot(sunDir)).normalize();
+    side.crossVectors(sunDir, toCam).normalize();
+    shaftBasis.makeBasis(side, sunDir, toCam);
+    s.quaternion.setFromRotationMatrix(shaftBasis);
+  }
+}
+
+// ── Environment: the water lights and tints every surface (reflections, soft fill from all sides) ──
+const envScene = new THREE.Scene();
+const envMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  uniforms: {
+    uUp: { value: new THREE.Color(cssVar('--sun') || '#73E9FB') },
+    uHor: { value: new THREE.Color(cssVar('--surface') || '#2C6FD6') },
+    uDown: { value: new THREE.Color(cssVar('--sand') || '#8FA3B5') },
+    uSunDir: { value: sunDir }, uGain: { value: 0.35 }, uSun: { value: 1.6 },
+  },
+  vertexShader: 'varying vec3 vDir; void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform vec3 uUp; uniform vec3 uHor; uniform vec3 uDown; uniform vec3 uSunDir; uniform float uGain; uniform float uSun; varying vec3 vDir;
+    void main(){
+      vec3 d = normalize(vDir);
+      vec3 c = d.y > 0.0 ? mix(uHor * 0.7, uUp, pow(d.y, 0.7)) : mix(uHor * 0.7, uDown * 0.3, pow(-d.y, 0.5));
+      float s = max(dot(d, uSunDir), 0.0);
+      c += vec3(1.0, 0.97, 0.9) * uSun * (pow(s, 32.0) + pow(s, 4.0) * 0.1);
+      gl_FragColor = vec4(c * uGain, 1.0);
+    }`,
+});
+envScene.add(new THREE.Mesh(new THREE.SphereGeometry(10, 48, 24), envMat));
+let envRT = null;
+function makeEnv(gain = envMat.uniforms.uGain.value, sunGain = envMat.uniforms.uSun.value) {
+  envMat.uniforms.uGain.value = gain; envMat.uniforms.uSun.value = sunGain;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const next = pmrem.fromScene(envScene, 0.02);
+  pmrem.dispose();
+  scene.environment = next.texture;
+  if (envRT) envRT.dispose();
+  envRT = next;
+}
+makeEnv();
+
+// ── Post-processing: ambient occlusion, depth of field, bloom, tone mapping and colour grade ──
+// Replaces any invalid pixel (NaN / infinity) before the blurs, which would otherwise spread it into blotches,
+// and keeps the image opaque.
+class SanitizeEffect extends Effect {
+  constructor() {
+    super('SanitizeEffect', `void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+      vec3 c = inputColor.rgb;
+      if (any(isnan(c)) || any(isinf(c)) || c.r != c.r || c.g != c.g || c.b != c.b) c = vec3(0.0);
+      outputColor = vec4(clamp(c, 0.0, 64.0), 1.0);
+    }`);
+  }
+}
+// Last step: the canvas is transparent for the globe's starfield, so the reef image must leave fully opaque
+// (bloom otherwise writes its own alpha and the page shows through in patches).
+class OpaqueEffect extends Effect {
+  constructor() {
+    super('OpaqueEffect', 'void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) { outputColor = vec4(inputColor.rgb, 1.0); }',
+      { blendFunction: BlendFunction.SRC });
+  }
+}
+let composer = null;
+const fx = {};
+function buildComposer() {
+  if (composer) { composer.dispose(); composer = null; }
+  Object.keys(fx).forEach((k) => delete fx[k]);
+  renderer.setPixelRatio(pixelRatioFor(tier));
+  if (tier === 'off') return;
+  try {
+    const w = stage.clientWidth || 1, h = stage.clientHeight || 1;
+    composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType, multisampling: tier === 'high' ? 2 : 0 });
+    composer.addPass(new RenderPass(scene, camera));
+    fx.ao = new N8AOPostPass(scene, camera, w, h);
+    Object.assign(fx.ao.configuration, {
+      aoRadius: 0.22, distanceFalloff: 0.6, intensity: 2.6, aoSamples: tier === 'high' ? 12 : 8,
+      denoiseSamples: tier === 'high' ? 6 : 4, denoiseRadius: 10, halfRes: true,
+      color: new THREE.Color(cssVar('--abyss') || '#08193D'), gammaCorrection: false,
+    });
+    composer.addPass(fx.ao);
+    composer.addPass(new EffectPass(camera, new SanitizeEffect()));
+    if (tier === 'high') {
+      fx.dof = new DepthOfFieldEffect(camera, { worldFocusDistance: 3.6, worldFocusRange: 2.4, bokehScale: 2.2, resolutionScale: 0.5 });
+      fx.dof.target = controls.target;   // keep the colony (or the close-up tip) sharp
+      composer.addPass(new EffectPass(camera, fx.dof));
+    }
+    fx.bloom = new BloomEffect({ mipmapBlur: true, intensity: 0.45, luminanceThreshold: 0.92, luminanceSmoothing: 0.15, radius: 0.65 });
+    fx.tone = new ToneMappingEffect({ mode: params.get('tm') === 'agx' ? ToneMappingMode.AGX : ToneMappingMode.ACES_FILMIC });
+    fx.sat = new HueSaturationEffect({ saturation: 0.28 });
+    fx.contrast = new BrightnessContrastEffect({ brightness: 0.02, contrast: 0.18 });
+    fx.vignette = new VignetteEffect({ offset: 0.32, darkness: 0.55 });
+    composer.addPass(new EffectPass(camera, fx.bloom, fx.tone, fx.sat, fx.contrast, fx.vignette, new OpaqueEffect()));
+    composer.setSize(w, h, false);
+  } catch (err) {
+    console.warn('Reef Pulse: post-processing unavailable, using the plain render.', err);
+    if (composer) composer.dispose();
+    composer = null; tier = 'off'; renderer.setPixelRatio(pixelRatioFor(tier));
+  }
+}
+buildComposer();
+
+// Watch the frame time and drop a quality level if the scene can't keep up (unless forced by ?quality).
+// Very long frames (a hidden or throttled window) don't count.
+let slowFrames = 0, sampled = 0, fpsFrames = 0, fpsT = 0, fps = 0;
+function watchFrame(dt) {
+  fpsFrames += 1; fpsT += dt; if (fpsT >= 1) { fps = Math.round(fpsFrames / fpsT); fpsFrames = 0; fpsT = 0; }
+  if (forced || tier === 'off' || document.hidden || dt > 0.2) return;
+  sampled += 1; if (dt > 1 / 30) slowFrames += 1;
+  if (sampled < 240) return;
+  if (slowFrames > 170) { tier = tier === 'high' ? 'low' : 'off'; buildComposer(); resize(); }
+  sampled = 0; slowFrames = 0;
+}
 
 
 let levelTarget = 26 / 60;
@@ -982,6 +1299,11 @@ function resize() {
     if (w > 820) c.setViewOffset(w, h, -w * 0.25, h * 0.02, w, h); else c.clearViewOffset();
     c.updateProjectionMatrix();
   }
+  // Backdrop and fog look up the water colour by pixel, so they need the drawing-buffer size
+  const pr = renderer.getPixelRatio();
+  backdropU.uRes.value.set(Math.max(1, Math.floor(w * pr)), Math.max(1, Math.floor(h * pr)));
+  scene.fog.near = backdropU.uRes.value.y; scene.fog.far = backdropU.uRes.value.x;
+  if (composer) composer.setSize(w, h, false);
 }
 const ro = new ResizeObserver(resize); ro.observe(stage);
 resize();
@@ -989,12 +1311,12 @@ resize();
 const clock = new THREE.Clock();
 const camGoal = new THREE.Vector3(), tgtGoal = new THREE.Vector3();
 renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const raw = clock.getDelta(), dt = Math.min(raw, 0.05);
   if (!reduceMotion) {
     U.uTime.value += dt;
-    nextSchool -= dt;
-    if (nextSchool <= 0) { spawnSchool(); nextSchool = 10 + Math.random() * 14; }
-    updateFish(dt, U.uTime.value);
+    nextVisit -= dt;
+    if (nextVisit <= 0) { spawnVisitors(); nextVisit = 14 + Math.random() * 16; }
+    updateVisitors(dt, U.uTime.value);
   }
   U.uLevel.value += (levelTarget - U.uLevel.value) * (reduceMotion ? 1 : Math.min(1, dt * 3));
   if (flying > 0) {
@@ -1009,10 +1331,21 @@ renderer.setAnimationLoop(() => {
     if (!busy) gControls.update();
     placeLabel(selLabel, busy ? -1 : getState().reef);
     placeLabel(hovLabel, !busy && hoverI !== getState().reef ? hoverI : -1);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.setClearAlpha(0);                      // the starfield behind the globe is a page layer
     renderer.render(globeScene, gCam);
   } else {
     if (!busy) controls.update();
-    renderer.render(scene, camera);
+    faceShafts();
+    if (composer) {
+      renderer.toneMapping = THREE.NoToneMapping;   // tone mapping happens in the last effect pass
+      renderer.setClearAlpha(1);                    // effects carry alpha through: keep the image opaque
+      composer.render(dt);
+    } else {
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.render(scene, camera);
+    }
+    watchFrame(raw);
   }
 });
 // ── API used by React ──
@@ -1027,10 +1360,13 @@ return {
   leaveGlobe,
   inGlobe: () => mode === 'globe',
   refreshPins() { if (mode === 'globe') { colourPins(); hintGlobe(T().globeHint); } },
+  // Tuning handle, only with ?debug in the URL
+  debug: (params.has('debug') || process.env.REACT_APP_RP_TUNE) ? { fx, hemi, sun, makeEnv, backdrop, shaftMat, scene, renderer, U, get tier() { return tier; }, get fps() { return fps; }, get composer() { return composer; }, setLevel(v) { levelTarget = v; }, camera, controls, spawnVisitors, get fishInfo() { return { templates: Object.keys(swimTemplates), visitors: visitors.map((f) => [f.position.x, f.position.y, f.position.z].map((v) => +v.toFixed(2))) }; }, peekFish() { visitors.forEach((f, i) => { f.position.set(1.3 + i * 0.35, 0.6, 0.6); f.userData.speed = 0.01; }); }, setTier(q) { tier = q; buildComposer(); resize(); } } : null,
   dispose() {
     if (disposed) return; disposed = true;
     renderer.setAnimationLoop(null); ro.disconnect();
     controls.dispose(); gControls.dispose();
+    if (composer) composer.dispose(); if (envRT) envRT.dispose();
     [space, fade, gHint, selLabel, hovLabel].forEach((el) => el.remove());
     scene.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
     renderer.dispose();
